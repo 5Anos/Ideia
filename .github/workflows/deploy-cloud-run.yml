@@ -1,0 +1,55 @@
+name: Deploy MANDATO para Google Cloud Run
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SERVICE_NAME: mandato-app
+      REGION: europe-west2
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Validar testes e build antes do deploy
+        run: |
+          npm ci
+          npm run lint
+          npm test
+          npm run build
+
+      - name: Autenticar na Google Cloud
+        if: ${{ secrets.GCP_SA_KEY != '' && secrets.GCP_PROJECT_ID != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Deploy no Cloud Run
+        if: ${{ secrets.GCP_SA_KEY != '' && secrets.GCP_PROJECT_ID != '' }}
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          source: .
+          flags: >-
+            --allow-unauthenticated
+            --port=3000
+            --set-env-vars=NODE_ENV=production,GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},MANDATO_SESSION_SECRET=${{ secrets.MANDATO_SESSION_SECRET }}
+
+      - name: Aviso se os segredos GCP ainda não estiverem configurados
+        if: ${{ secrets.GCP_SA_KEY == '' || secrets.GCP_PROJECT_ID == '' }}
+        run: |
+          echo "Configure os Repository Secrets GCP_PROJECT_ID, GCP_SA_KEY, GEMINI_API_KEY e MANDATO_SESSION_SECRET no GitHub (Settings -> Secrets and variables -> Actions) para ativar o deploy automático para o Cloud Run."
+          exit 1
