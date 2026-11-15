@@ -1,10 +1,31 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { UserRole, SubscriptionPlan } from '../shared/types.ts';
 
-const SESSION_SECRET =
-  process.env.MANDATO_SESSION_SECRET && process.env.MANDATO_SESSION_SECRET.length >= 16
-    ? process.env.MANDATO_SESSION_SECRET
-    : crypto.createHash('sha256').update(process.cwd() + '_mandato_dev_secret_key').digest('hex');
+function resolveSessionSecret(): string {
+  const envSecret = process.env.MANDATO_SESSION_SECRET?.trim();
+  if (envSecret && envSecret.length >= 16) {
+    return envSecret;
+  }
+  try {
+    const customDir = process.env.MANDATO_CONTROL_PLANE_DIR?.trim();
+    const dir = customDir ? path.resolve(customDir) : path.resolve(process.cwd(), '.mandato-control-plane');
+    fs.mkdirSync(dir, { recursive: true });
+    const secretFile = path.join(dir, '.session-secret');
+    if (fs.existsSync(secretFile)) {
+      const stored = fs.readFileSync(secretFile, 'utf8').trim();
+      if (stored.length >= 32) return stored;
+    }
+    const generated = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(secretFile, generated, { encoding: 'utf8', mode: 0o600 });
+    return generated;
+  } catch {
+    return crypto.randomBytes(32).toString('hex');
+  }
+}
+
+const SESSION_SECRET = resolveSessionSecret();
 
 export function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -136,6 +157,7 @@ export type PermissionCapability =
   | 'manage_integrations'
   | 'manage_users'
   | 'manage_settings'
+  | 'manage_database'
   | 'export_audit';
 
 const ROLE_CAPABILITIES: Record<UserRole, Set<PermissionCapability>> = {
@@ -150,6 +172,7 @@ const ROLE_CAPABILITIES: Record<UserRole, Set<PermissionCapability>> = {
     'manage_integrations',
     'manage_users',
     'manage_settings',
+    'manage_database',
     'export_audit',
   ]),
   ADMIN: new Set([
@@ -161,6 +184,7 @@ const ROLE_CAPABILITIES: Record<UserRole, Set<PermissionCapability>> = {
     'approve_requests',
     'manage_workflows',
     'manage_integrations',
+    'manage_database',
     'export_audit',
   ]),
   APPROVER: new Set(['view_dashboard', 'approve_requests', 'test_agent', 'export_audit']),

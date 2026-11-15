@@ -1,16 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { Download, Lock } from 'lucide-react';
-import { apiFetch, getStoredToken } from '../utils/api';
+import { apiFetch, getStoredToken, isDatabaseNotConnectedError } from '../utils/api';
 import { formatDateTimePT } from '../utils/formatters';
+import { DatabaseNotConnectedBanner } from './DatabaseNotConnectedBanner';
 import type { AuditLogRecord } from '../shared/types';
 
-export const AuditLogsView: React.FC = () => {
+interface AuditLogsViewProps {
+  onNavigateSettings?: () => void;
+}
+
+export const AuditLogsView: React.FC<AuditLogsViewProps> = ({ onNavigateSettings }) => {
   const [logs, setLogs] = useState<AuditLogRecord[]>([]);
   const [search, setSearch] = useState('');
   const [eventType, setEventType] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [dbDisconnected, setDbDisconnected] = useState(false);
 
   async function loadLogs() {
     setLoading(true);
@@ -23,6 +30,11 @@ export const AuditLogsView: React.FC = () => {
     try {
       const res = await apiFetch<{ logs: AuditLogRecord[] }>(`/api/audit-logs?${params.toString()}`);
       setLogs(res.logs);
+      setDbDisconnected(false);
+      setError(null);
+    } catch (err) {
+      setDbDisconnected(isDatabaseNotConnectedError(err));
+      setError(err instanceof Error ? err.message : 'Erro ao carregar registos de auditoria.');
     } finally {
       setLoading(false);
     }
@@ -45,6 +57,22 @@ export const AuditLogsView: React.FC = () => {
     a.download = 'mandato_auditoria.csv';
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  if (dbDisconnected) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-slate-900 tracking-tight">
+            Histórico e Auditoria
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Registos imutáveis (append-only) armazenados na folha de cálculo da empresa.
+          </p>
+        </div>
+        <DatabaseNotConnectedBanner message={error || undefined} onNavigateSettings={onNavigateSettings} />
+      </div>
+    );
   }
 
   return (

@@ -8,68 +8,74 @@ import {
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-export const GOOGLE_DRIVE_SCOPES = [
+export const GOOGLE_SHEETS_SCOPES = [
+  'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/drive.metadata.readonly',
 ];
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-const provider = new GoogleAuthProvider();
-for (const scope of GOOGLE_DRIVE_SCOPES) {
-  provider.addScope(scope);
+function buildGoogleProvider(loginHint?: string): GoogleAuthProvider {
+  const provider = new GoogleAuthProvider();
+  for (const scope of GOOGLE_SHEETS_SCOPES) {
+    provider.addScope(scope);
+  }
+  const params: Record<string, string> = {
+    prompt: 'consent select_account',
+  };
+  if (loginHint?.trim()) {
+    params.login_hint = loginHint.trim();
+  }
+  provider.setCustomParameters(params);
+  return provider;
 }
-provider.setCustomParameters({
-  prompt: 'select_account',
-});
 
-// Cache do token de acesso estritamente em memória (nunca guardar em localStorage ou sessionStorage)
+// Token transitório usado apenas durante o handshake de entrega ao servidor (nunca persistido no browser)
 let isSigningIn = false;
-let cachedAccessToken: string | null = null;
+let transientAccessToken: string | null = null;
 
 export function initGoogleDriveAuth(
-  onAuthSuccess?: (user: User, accessToken: string) => void,
   onAuthCleared?: () => void
 ): () => void {
   return onAuthStateChanged(auth, (user: User | null) => {
-    if (user && cachedAccessToken) {
-      onAuthSuccess?.(user, cachedAccessToken);
-    } else if (!isSigningIn) {
-      if (!user) {
-        cachedAccessToken = null;
-      }
+    if (!user && !isSigningIn) {
+      transientAccessToken = null;
       onAuthCleared?.();
     }
   });
 }
 
-export async function signInWithCompanyGoogleDrive(): Promise<{
-  user: User;
+export function clearGoogleAccessTokenFromMemory(): void {
+  transientAccessToken = null;
+}
+
+export async function requestGoogleWorkspaceAccessToken(loginHint?: string): Promise<{
+  email: string | null;
+  displayName: string | null;
   accessToken: string;
 } | null> {
   try {
     isSigningIn = true;
+    const provider = buildGoogleProvider(loginHint);
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
-      throw new Error('Não foi possível obter o token de acesso do Google Drive.');
+      throw new Error('Não foi possível obter o token de acesso Google Workspace.');
     }
-    cachedAccessToken = credential.accessToken;
-    return { user: result.user, accessToken: cachedAccessToken };
+    transientAccessToken = credential.accessToken;
+    return {
+      email: result.user.email,
+      displayName: result.user.displayName,
+      accessToken: transientAccessToken,
+    };
   } finally {
     isSigningIn = false;
   }
 }
 
-export function getGoogleDriveAccessToken(): string | null {
-  return cachedAccessToken;
-}
-
-export function getCurrentGoogleUser(): User | null {
-  return auth.currentUser;
-}
-
 export async function signOutGoogleDrive(): Promise<void> {
-  cachedAccessToken = null;
-  await auth.signOut();
+  transientAccessToken = null;
+  await auth.signOut().catch(() => undefined);
 }

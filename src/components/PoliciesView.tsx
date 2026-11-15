@@ -1,14 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, ShieldAlert, Lock } from 'lucide-react';
-import { apiFetch } from '../utils/api';
+import { apiFetch, isDatabaseNotConnectedError } from '../utils/api';
 import { formatEUR } from '../utils/formatters';
+import { DatabaseNotConnectedBanner } from './DatabaseNotConnectedBanner';
 import type { Agent, Policy, PolicyRuleType } from '../shared/types';
 
-export const PoliciesView: React.FC = () => {
+interface PoliciesViewProps {
+  onNavigateSettings?: () => void;
+}
+
+export const PoliciesView: React.FC<PoliciesViewProps> = ({ onNavigateSettings }) => {
   const [policies, setPolicies] = useState<Array<Policy & { assigned_agent_ids?: string[] }>>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dbDisconnected, setDbDisconnected] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
   // Formulário nova política
@@ -31,7 +37,9 @@ export const PoliciesView: React.FC = () => {
       setPolicies(polRes.policies);
       setAgents(agRes.agents.filter((a) => a.status !== 'archived'));
       setError(null);
+      setDbDisconnected(false);
     } catch (err) {
+      setDbDisconnected(isDatabaseNotConnectedError(err));
       setError(err instanceof Error ? err.message : 'Erro ao carregar políticas.');
     } finally {
       setLoading(false);
@@ -89,6 +97,22 @@ export const PoliciesView: React.FC = () => {
     require_approval: 'Aprovação Obrigatória',
     allow_if_verified: 'Permitir se Verificado',
   };
+
+  if (dbDisconnected) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-slate-900 tracking-tight">
+            Políticas e Permissões
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Regras avaliadas no servidor antes de qualquer ação sensível.
+          </p>
+        </div>
+        <DatabaseNotConnectedBanner message={error || undefined} onNavigateSettings={onNavigateSettings} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

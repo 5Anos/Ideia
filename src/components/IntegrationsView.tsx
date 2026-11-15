@@ -1,11 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { Plug, Terminal, CheckCircle2, AlertCircle } from 'lucide-react';
-import { apiFetch } from '../utils/api';
+import { apiFetch, isDatabaseNotConnectedError } from '../utils/api';
+import { DatabaseNotConnectedBanner } from './DatabaseNotConnectedBanner';
 import type { IntegrationItem } from '../shared/types';
 
-export const IntegrationsView: React.FC = () => {
+interface IntegrationsViewProps {
+  onNavigateSettings?: () => void;
+}
+
+export const IntegrationsView: React.FC<IntegrationsViewProps> = ({ onNavigateSettings }) => {
   const [integrations, setIntegrations] = useState<IntegrationItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [dbDisconnected, setDbDisconnected] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'ai_provider' | 'business_system'>('all');
 
   // Testador do Gateway API /api/v1/authorize
@@ -19,7 +26,15 @@ export const IntegrationsView: React.FC = () => {
 
   useEffect(() => {
     apiFetch<{ integrations: IntegrationItem[] }>('/api/integrations')
-      .then((res) => setIntegrations(res.integrations))
+      .then((res) => {
+        setIntegrations(res.integrations);
+        setDbDisconnected(false);
+        setError(null);
+      })
+      .catch((err) => {
+        setDbDisconnected(isDatabaseNotConnectedError(err));
+        setError(err instanceof Error ? err.message : 'Erro ao carregar integrações.');
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -55,6 +70,22 @@ export const IntegrationsView: React.FC = () => {
     selectedCategory === 'all'
       ? integrations
       : integrations.filter((i) => i.category === selectedCategory);
+
+  if (dbDisconnected) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-slate-900 tracking-tight">
+            Integrações e Gateway API
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Ligue a Folha de Cálculo Google da empresa para consultar e gerir integrações.
+          </p>
+        </div>
+        <DatabaseNotConnectedBanner message={error || undefined} onNavigateSettings={onNavigateSettings} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

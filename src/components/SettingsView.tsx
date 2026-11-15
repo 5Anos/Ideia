@@ -2,36 +2,48 @@ import React, { useEffect, useState } from 'react';
 import {
   Database,
   Check,
-  HardDrive,
   RefreshCw,
-  UploadCloud,
-  DownloadCloud,
-  Trash2,
-  LogOut,
+  PlusCircle,
+  FolderSearch,
+  CheckCircle2,
   AlertTriangle,
+  ExternalLink,
+  Unplug,
+  Wrench,
+  Activity,
+  X,
 } from 'lucide-react';
-import { apiFetch, getStoredToken } from '../utils/api';
+import { apiFetch } from '../utils/api';
 import { formatDateTimePT, formatEUR } from '../utils/formatters';
 import {
-  getGoogleDriveAccessToken,
-  initGoogleDriveAuth,
-  signInWithCompanyGoogleDrive,
+  clearGoogleAccessTokenFromMemory,
+  requestGoogleWorkspaceAccessToken,
   signOutGoogleDrive,
 } from '../utils/googleDriveAuth';
 import { GoogleSignInButton } from './GoogleSignInButton';
-import type { Company, SubscriptionPlan, UserRole } from '../shared/types';
+import type {
+  Company,
+  SheetsConnectionStatus,
+  SubscriptionPlan,
+  TenantSheetsConfig,
+  UserRole,
+} from '../shared/types';
 
-interface DriveFileSummary {
+interface SpreadsheetListItem {
   id: string;
   name: string;
   modifiedTime: string;
-  sizeBytes: number;
+  webViewLink: string;
 }
 
-interface DriveConfirmAction {
-  type: 'sync' | 'restore' | 'delete';
-  fileId?: string;
-  fileName?: string;
+interface SheetsTestStepResult {
+  step: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface ConfirmDialogState {
+  type: 'create' | 'initialize' | 'disconnect';
   title: string;
   description: string;
   confirmLabel: string;
@@ -41,9 +53,24 @@ interface DriveConfirmAction {
 interface SettingsViewProps {
   currentUserRole: UserRole;
   onCompanyUpdated: () => void;
+  initialOAuthNotice?: { kind: 'success' | 'error'; text: string } | null;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ currentUserRole, onCompanyUpdated }) => {
+const CONNECTION_BADGE_STYLES: Record<SheetsConnectionStatus, string> = {
+  'Ligado': 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  'Não configurado': 'bg-slate-100 text-slate-700 border-slate-200',
+  'A aguardar autorização': 'bg-amber-50 text-amber-800 border-amber-200',
+  'Erro de autenticação': 'bg-red-50 text-red-800 border-red-200',
+  'Sem acesso à folha': 'bg-red-50 text-red-800 border-red-200',
+  'Estrutura inválida': 'bg-amber-50 text-amber-800 border-amber-200',
+  'Ligação expirada': 'bg-red-50 text-red-800 border-red-200',
+};
+
+export const SettingsView: React.FC<SettingsViewProps> = ({
+  currentUserRole,
+  onCompanyUpdated,
+  initialOAuthNotice,
+}) => {
   const [company, setCompany] = useState<Company | null>(null);
   const [plans, setPlans] = useState<
     Record<
@@ -60,30 +87,41 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUserRole, onC
       }
     >
   >({} as never);
-  const [dbMode, setDbMode] = useState('');
-  const [supabaseConfigured, setSupabaseConfigured] = useState(false);
+  const [dbMode, setDbMode] = useState('Google Sheets Multi-Tenant por Empresa');
+  const [sheetsConfig, setSheetsConfig] = useState<TenantSheetsConfig | null>(null);
 
   const [name, setName] = useState('');
   const [nif, setNif] = useState('');
   const [sector, setSector] = useState('');
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  // Estado Google Drive da Empresa
-  const [driveToken, setDriveToken] = useState<string | null>(() => getGoogleDriveAccessToken());
-  const [driveAccount, setDriveAccount] = useState<{ email: string; displayName: string } | null>(null);
-  const [driveFiles, setDriveFiles] = useState<DriveFileSummary[]>([]);
-  const [driveLoading, setDriveLoading] = useState(false);
-  const [driveBusy, setDriveBusy] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<DriveConfirmAction | null>(null);
+  const [googleEmailInput, setGoogleEmailInput] = useState('');
+  const [spreadsheetInput, setSpreadsheetInput] = useState('');
+  const [initializeMissingOnSelect, setInitializeMissingOnSelect] = useState(true);
 
-  const canEdit = currentUserRole === 'OWNER';
+  const [showPickerModal, setShowPickerModal] = useState(false);
+  const [availableSheets, setAvailableSheets] = useState<SpreadsheetListItem[]>([]);
+  const [loadingSheetsList, setLoadingSheetsList] = useState(false);
+
+  const [testSteps, setTestSteps] = useState<SheetsTestStepResult[] | null>(null);
+  const [sheetsBusy, setSheetsBusy] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+
+  const [message, setMessage] = useState<string | null>(
+    initialOAuthNotice?.kind === 'success' ? initialOAuthNotice.text : null
+  );
+  const [error, setError] = useState<string | null>(
+    initialOAuthNotice?.kind === 'error' ? initialOAuthNotice.text : null
+  );
+
+  const canEditCompany = currentUserRole === 'OWNER';
+  const canManageDatabase = currentUserRole === 'OWNER' || currentUserRole === 'ADMIN';
 
   async function loadSettings() {
-    const [compRes, sysRes] = await Promise.all([
+    const [compRes, sysRes, sheetsRes] = await Promise.all([
       apiFetch<{ company: Company; plans: typeof plans }>('/api/company'),
-      apiFetch<{ database_mode: string; supabase_configured: boolean }>('/api/system/status'),
+      apiFetch<{ database_mode: string }>('/api/system/status'),
+      apiFetch<{ config: TenantSheetsConfig }>('/api/company/sheets/config'),
     ]);
     setCompany(compRes.company);
     setPlans(compRes.plans);
@@ -91,130 +129,226 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUserRole, onC
     setNif(compRes.company.nif || '');
     setSector(compRes.company.sector || '');
     setDbMode(sysRes.database_mode);
-    setSupabaseConfigured(sysRes.supabase_configured);
-  }
-
-  async function driveApiRequest<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-    const sessionToken = getStoredToken();
-    const res = await fetch(path, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
-        'X-Google-Access-Token': token,
-        ...(init?.headers || {}),
-      },
-    });
-    const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-    if (!res.ok) {
-      throw new Error(data.error || `Erro (${res.status})`);
-    }
-    return data;
-  }
-
-  async function refreshDriveFiles(token: string) {
-    setDriveLoading(true);
-    try {
-      const data = await driveApiRequest<{
-        account: { email: string; displayName: string };
-        files: DriveFileSummary[];
-      }>('/api/company/drive/status', token);
-      setDriveAccount(data.account);
-      setDriveFiles(data.files);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao carregar estado da Google Drive.');
-    } finally {
-      setDriveLoading(false);
-    }
+    setSheetsConfig(sheetsRes.config);
+    setGoogleEmailInput(sheetsRes.config.entered_google_email || '');
   }
 
   useEffect(() => {
-    loadSettings();
-    const unsub = initGoogleDriveAuth(
-      (_user, token) => {
-        setDriveToken(token);
-        if (canEdit) refreshDriveFiles(token);
-      },
-      () => {
-        setDriveToken(null);
-        setDriveAccount(null);
-        setDriveFiles([]);
-      }
-    );
-    const existing = getGoogleDriveAccessToken();
-    if (existing && canEdit) {
-      setDriveToken(existing);
-      refreshDriveFiles(existing);
-    }
-    return unsub;
-  }, [canEdit]);
+    loadSettings().catch((err) => {
+      setError(err instanceof Error ? err.message : 'Erro ao carregar definições.');
+    });
+  }, []);
 
-  async function handleConnectGoogleDrive() {
+  async function handleSaveGoogleEmail(e: React.FormEvent) {
+    e.preventDefault();
     setError(null);
     setMessage(null);
-    setDriveLoading(true);
+    setSheetsBusy(true);
     try {
-      const res = await signInWithCompanyGoogleDrive();
-      if (res?.accessToken) {
-        setDriveToken(res.accessToken);
-        await refreshDriveFiles(res.accessToken);
-        setMessage(`Conta Google Drive (${res.user.email || 'empresarial'}) ligada com sucesso nesta sessão.`);
-      }
+      const res = await apiFetch<{ config: TenantSheetsConfig }>('/api/company/sheets/email', {
+        method: 'PUT',
+        body: JSON.stringify({ entered_google_email: googleEmailInput.trim() }),
+      });
+      setSheetsConfig(res.config);
+      setMessage('Email Google empresarial guardado. Inicie ou valide a ligação Google abaixo.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha na autenticação com o Google.');
+      setError(err instanceof Error ? err.message : 'Erro ao guardar email Google.');
     } finally {
-      setDriveLoading(false);
+      setSheetsBusy(false);
     }
   }
 
-  async function handleDisconnectGoogleDrive() {
-    await signOutGoogleDrive();
-    setDriveToken(null);
-    setDriveAccount(null);
-    setDriveFiles([]);
-    setMessage('Sessão Google Drive terminada e token removido da memória.');
-  }
-
-  async function executeConfirmedDriveAction() {
-    if (!confirmAction || !driveToken) return;
-    setDriveBusy(true);
+  async function handleConnectGoogleAccount() {
     setError(null);
     setMessage(null);
+    setTestSteps(null);
+    setSheetsBusy(true);
     try {
-      if (confirmAction.type === 'sync') {
-        const res = await driveApiRequest<{ file: DriveFileSummary; operation: 'created' | 'updated' }>(
-          '/api/company/drive/sync',
-          driveToken,
+      const startParams = googleEmailInput.trim()
+        ? `?email=${encodeURIComponent(googleEmailInput.trim())}`
+        : '';
+      const startRes = await apiFetch<{
+        mode: 'authorization_code_pkce' | 'workspace_popup_bridge';
+        authUrl?: string;
+        state: string;
+      }>(`/api/company/sheets/oauth/start${startParams}`);
+
+      if (startRes.mode === 'authorization_code_pkce' && startRes.authUrl) {
+        window.location.assign(startRes.authUrl);
+        return;
+      }
+
+      // Modo ponte popup Workspace: obter token transitório, enviar para cofre encriptado no servidor e limpar de imediato da memória
+      const authResult = await requestGoogleWorkspaceAccessToken(googleEmailInput.trim() || undefined);
+      if (!authResult?.accessToken) {
+        throw new Error('Autenticação Google cancelada ou sem token de acesso.');
+      }
+
+      const tokenToSend = authResult.accessToken;
+      clearGoogleAccessTokenFromMemory();
+
+      const bridgeRes = await apiFetch<{
+        verified_email: string;
+        email_mismatch_warning: boolean;
+        config: TenantSheetsConfig;
+      }>('/api/company/sheets/oauth/bridge', {
+        method: 'POST',
+        body: JSON.stringify({
+          state: startRes.state,
+          access_token: tokenToSend,
+          entered_google_email: googleEmailInput.trim() || undefined,
+        }),
+      });
+
+      setSheetsConfig(bridgeRes.config);
+      setMessage(
+        bridgeRes.email_mismatch_warning
+          ? `Conta Google autorizada (${bridgeRes.verified_email}), mas difere do email indicado (${googleEmailInput.trim()}). Confirme abaixo se pretende utilizá-la.`
+          : `Conta Google autorizada com sucesso (${bridgeRes.verified_email}). Token armazenado de forma encriptada no servidor.`
+      );
+      onCompanyUpdated();
+    } catch (err) {
+      clearGoogleAccessTokenFromMemory();
+      setError(err instanceof Error ? err.message : 'Falha na ligação à conta Google.');
+    } finally {
+      setSheetsBusy(false);
+    }
+  }
+
+  async function handleConfirmMismatch() {
+    setError(null);
+    setMessage(null);
+    setSheetsBusy(true);
+    try {
+      const res = await apiFetch<{ config: TenantSheetsConfig }>('/api/company/sheets/oauth/confirm-mismatch', {
+        method: 'POST',
+      });
+      setSheetsConfig(res.config);
+      setGoogleEmailInput(res.config.entered_google_email);
+      setMessage(`Conta Google ${res.config.verified_google_email} confirmada para esta empresa.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao confirmar conta Google.');
+    } finally {
+      setSheetsBusy(false);
+    }
+  }
+
+  async function handleOpenPicker() {
+    setError(null);
+    setShowPickerModal(true);
+    setLoadingSheetsList(true);
+    try {
+      const res = await apiFetch<{ spreadsheets: SpreadsheetListItem[] }>('/api/company/sheets/list');
+      setAvailableSheets(res.spreadsheets);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao listar folhas de cálculo do Google Drive.');
+    } finally {
+      setLoadingSheetsList(false);
+    }
+  }
+
+  async function handleSelectSpreadsheet(inputValue: string) {
+    if (!inputValue.trim()) {
+      setError('Indique o ID ou URL de uma Folha de Cálculo Google.');
+      return;
+    }
+    setError(null);
+    setMessage(null);
+    setSheetsBusy(true);
+    try {
+      const res = await apiFetch<{
+        config: TenantSheetsConfig;
+        schema_report: { valid: boolean; missingWorksheets: string[] };
+      }>('/api/company/sheets/select', {
+        method: 'POST',
+        body: JSON.stringify({
+          spreadsheet_input: inputValue.trim(),
+          initialize_missing: initializeMissingOnSelect,
+        }),
+      });
+      setSheetsConfig(res.config);
+      setShowPickerModal(false);
+      setSpreadsheetInput('');
+      setMessage(
+        res.schema_report.valid
+          ? `Folha de cálculo "${res.config.spreadsheet_name}" ligada e validada como base de dados da empresa.`
+          : `Folha selecionada, mas faltam abas do esquema MANDATO (${res.schema_report.missingWorksheets.join(', ')}).`
+      );
+      onCompanyUpdated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao associar folha de cálculo.');
+    } finally {
+      setSheetsBusy(false);
+    }
+  }
+
+  async function handleTestConnection() {
+    setError(null);
+    setMessage(null);
+    setSheetsBusy(true);
+    try {
+      const res = await apiFetch<{
+        ok: boolean;
+        steps: SheetsTestStepResult[];
+        config: TenantSheetsConfig;
+      }>('/api/company/sheets/test', { method: 'POST' });
+      setSheetsConfig(res.config);
+      setTestSteps(res.steps);
+      if (res.ok) {
+        setMessage('Teste de ligação concluído com sucesso (leitura e escrita verificadas).');
+      } else {
+        setError('O teste de ligação detetou problemas. Consulte os passos abaixo.');
+      }
+      onCompanyUpdated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao testar ligação Google Sheets.');
+    } finally {
+      setSheetsBusy(false);
+    }
+  }
+
+  async function executeConfirmedDialogAction() {
+    if (!confirmDialog) return;
+    setError(null);
+    setMessage(null);
+    setSheetsBusy(true);
+    try {
+      if (confirmDialog.type === 'create') {
+        const res = await apiFetch<{ config: TenantSheetsConfig; spreadsheet: { title: string } }>(
+          '/api/company/sheets/create',
           { method: 'POST', body: JSON.stringify({}) }
         );
+        setSheetsConfig(res.config);
         setMessage(
-          `Base de dados ${res.operation === 'created' ? 'criada' : 'atualizada'} na Google Drive (${res.file.name}).`
+          `Folha de cálculo "${res.spreadsheet.title}" criada com 20 abas estruturadas e ativada como base de dados da empresa.`
         );
-        await refreshDriveFiles(driveToken);
-      } else if (confirmAction.type === 'restore' && confirmAction.fileId) {
-        const res = await driveApiRequest<{
-          restoredCounts: { agents: number; policies: number; workflows: number };
-        }>('/api/company/drive/restore', driveToken, {
+      } else if (confirmDialog.type === 'initialize') {
+        const res = await apiFetch<{
+          config: TenantSheetsConfig;
+          created_tabs: string[];
+          schema_report: { valid: boolean };
+        }>('/api/company/sheets/initialize-schema', { method: 'POST' });
+        setSheetsConfig(res.config);
+        setMessage(
+          res.created_tabs.length > 0
+            ? `Esquema inicializado: ${res.created_tabs.length} abas criadas/validadas.`
+            : 'Estrutura das 20 abas validada com sucesso.'
+        );
+      } else if (confirmDialog.type === 'disconnect') {
+        const res = await apiFetch<{ config: TenantSheetsConfig }>('/api/company/sheets/disconnect', {
           method: 'POST',
-          body: JSON.stringify({ file_id: confirmAction.fileId }),
         });
-        setMessage(
-          `Base de dados restaurada da Google Drive: ${res.restoredCounts.agents} agentes, ${res.restoredCounts.policies} políticas e ${res.restoredCounts.workflows} fluxos carregados.`
-        );
-        await loadSettings();
-        onCompanyUpdated();
-      } else if (confirmAction.type === 'delete' && confirmAction.fileId) {
-        await driveApiRequest(`/api/company/drive/files/${encodeURIComponent(confirmAction.fileId)}`, driveToken, {
-          method: 'DELETE',
-        });
-        setMessage(`Ficheiro "${confirmAction.fileName}" eliminado da Google Drive.`);
-        await refreshDriveFiles(driveToken);
+        await signOutGoogleDrive();
+        setSheetsConfig(res.config);
+        setTestSteps(null);
+        setMessage('Conta Google desligada e tokens revogados no servidor.');
       }
-      setConfirmAction(null);
+      setConfirmDialog(null);
+      onCompanyUpdated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro na operação com a Google Drive.');
+      setError(err instanceof Error ? err.message : 'Erro na operação Google Sheets.');
     } finally {
-      setDriveBusy(false);
+      setSheetsBusy(false);
     }
   }
 
@@ -258,17 +392,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUserRole, onC
     return <div className="bg-white border border-slate-200 rounded-xl h-72 animate-pulse" />;
   }
 
-  const targetFileName = `mandato-db-${company.slug}.json`;
-  const existingTargetFile = driveFiles.find((f) => f.name === targetFileName);
+  const hasOAuthCredentials = Boolean(sheetsConfig?.verified_google_email);
+  const hasSpreadsheet = Boolean(sheetsConfig?.spreadsheet_id);
+  const statusBadgeClass =
+    CONNECTION_BADGE_STYLES[sheetsConfig?.connection_status || 'Não configurado'];
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-2xl font-semibold text-slate-900 tracking-tight">
-          Definições e Subscrição
+          Definições e Base de Dados da Empresa
         </h1>
         <p className="text-xs text-slate-500 mt-1">
-          Dados fiscais da empresa, base de dados na Google Drive empresarial, planos comerciais SaaS e estado do servidor.
+          Configure a conta Google e a Folha de Cálculo Google dedicada da empresa, dados fiscais e plano SaaS.
         </p>
       </div>
 
@@ -283,210 +419,375 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUserRole, onC
         </div>
       )}
 
-      {/* Base de Dados na Google Drive da Empresa */}
-      <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 text-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-          <div className="flex items-start gap-2.5">
-            <HardDrive className="w-5 h-5 text-slate-700 mt-0.5 shrink-0" />
+      {/* SECÇÃO PRINCIPAL: Base de Dados da Empresa -> Google Sheets */}
+      <section
+        aria-labelledby="sheets-db-heading"
+        className="bg-white border border-slate-200 rounded-xl p-6 space-y-5 text-xs"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-100 pb-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-slate-900 flex items-center justify-center shrink-0">
+              <Database className="w-4 h-4 text-emerald-400" />
+            </div>
             <div>
-              <h2 className="font-display text-base font-semibold text-slate-900">
-                Base de Dados no Google Drive da Empresa
+              <h2 id="sheets-db-heading" className="font-display text-base font-semibold text-slate-900">
+                Base de Dados da Empresa → Google Sheets
               </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Ligue a conta Google/Gmail empresarial para guardar, sincronizar e restaurar a base de dados isolada da empresa numa pasta dedicada no Google Drive (<span className="font-mono">MANDATO - Base de Dados</span>).
+              <p className="text-xs text-slate-500 mt-0.5 max-w-2xl">
+                Cada empresa utiliza a sua própria conta Google e a sua própria Folha de Cálculo Google com 20 abas estruturadas para guardar todos os agentes, políticas, aprovações, fluxos e auditoria.
               </p>
             </div>
           </div>
 
-          {driveToken && driveAccount && (
-            <button
-              type="button"
-              onClick={handleDisconnectGoogleDrive}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg self-start"
+          {sheetsConfig && (
+            <span
+              data-testid="sheets-connection-status"
+              className={`inline-flex items-center px-2.5 py-1 rounded-md border text-xs font-semibold shrink-0 self-start ${statusBadgeClass}`}
             >
-              <LogOut className="w-3.5 h-3.5" />
-              Terminar Sessão Google
-            </button>
+              {sheetsConfig.connection_status}
+            </span>
           )}
         </div>
 
-        {!canEdit ? (
-          <p className="text-slate-500">
-            Apenas utilizadores com perfil <strong className="text-slate-700">OWNER (Proprietário)</strong> podem ligar ou sincronizar a base de dados empresarial no Google Drive.
-          </p>
-        ) : !driveToken ? (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-lg bg-slate-50 border border-slate-200">
-            <div className="space-y-1">
-              <p className="font-semibold text-slate-800">Conta Google Drive não ligada nesta sessão</p>
-              <p className="text-slate-600">
-                Inicie sessão com o Gmail da empresa para autorizar acesso apenas aos ficheiros criados pela plataforma MANDATO. O token permanece exclusivamente em memória.
+        {/* Metadados Atuais de Ligação */}
+        {sheetsConfig && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 rounded-lg bg-slate-50 border border-slate-200">
+            <div>
+              <p className="text-[11px] font-medium text-slate-500 uppercase">Conta Google Verificada</p>
+              <p className="mt-1 font-mono text-slate-900 truncate">
+                {sheetsConfig.verified_google_email || 'Não autenticada'}
               </p>
             </div>
-            <GoogleSignInButton
-              onClick={handleConnectGoogleDrive}
-              disabled={driveLoading}
-              label={driveLoading ? 'A ligar...' : 'Iniciar sessão com o Google'}
-            />
+            <div>
+              <p className="text-[11px] font-medium text-slate-500 uppercase">Folha de Cálculo Ativa</p>
+              {sheetsConfig.spreadsheet_id ? (
+                <a
+                  href={sheetsConfig.spreadsheet_url || `https://docs.google.com/spreadsheets/d/${sheetsConfig.spreadsheet_id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 font-medium text-slate-900 hover:underline truncate max-w-full"
+                >
+                  <span className="truncate">{sheetsConfig.spreadsheet_name || sheetsConfig.spreadsheet_id}</span>
+                  <ExternalLink className="w-3 h-3 shrink-0" />
+                </a>
+              ) : (
+                <p className="mt-1 text-slate-500">Nenhuma folha associada</p>
+              )}
+            </div>
+            <div>
+              <p className="text-[11px] font-medium text-slate-500 uppercase">Último Teste</p>
+              <p className="mt-1 font-mono text-slate-700">
+                {sheetsConfig.last_connection_test ? formatDateTimePT(sheetsConfig.last_connection_test) : 'Nunca testado'}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium text-slate-500 uppercase">Última Escrita</p>
+              <p className="mt-1 font-mono text-slate-700">
+                {sheetsConfig.last_successful_write ? formatDateTimePT(sheetsConfig.last_successful_write) : 'Sem escritas'}
+              </p>
+            </div>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-lg bg-emerald-50/70 border border-emerald-200">
-              <div>
-                <p className="font-semibold text-emerald-900">
-                  Ligado a: {driveAccount?.displayName || 'Conta Google'} ({driveAccount?.email || 'a verificar...'})
-                </p>
-                <p className="text-emerald-800 mt-0.5">
-                  Ficheiro alvo da empresa: <span className="font-mono">{targetFileName}</span>
+        )}
+
+        {/* Aviso de Divergência de Email */}
+        {sheetsConfig?.email_mismatch_warning && (
+          <div className="p-4 rounded-lg bg-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
+              <div className="text-amber-950">
+                <p className="font-semibold">Divergência entre email indicado e conta autorizada</p>
+                <p className="mt-0.5">
+                  Indicou <span className="font-mono">{sheetsConfig.entered_google_email}</span>, mas autorizou com{' '}
+                  <span className="font-mono">{sheetsConfig.verified_google_email}</span>. Confirme se pretende usar a conta autorizada ou volte a ligar com a conta pretendida.
                 </p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+            </div>
+            {canManageDatabase && (
+              <button
+                type="button"
+                disabled={sheetsBusy}
+                onClick={handleConfirmMismatch}
+                className="px-3 py-1.5 bg-amber-700 text-white rounded-lg font-medium hover:bg-amber-800 shrink-0"
+              >
+                Confirmar utilização desta conta
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Último erro / abas em falta */}
+        {sheetsConfig?.last_error && (
+          <div className="p-3.5 rounded-lg bg-red-50 border border-red-200 text-red-900 space-y-1">
+            <p className="font-semibold">Diagnóstico da ligação:</p>
+            <p>{sheetsConfig.last_error}</p>
+            {sheetsConfig.missing_worksheets.length > 0 && (
+              <p className="font-mono text-[11px]">
+                Abas em falta: {sheetsConfig.missing_worksheets.join(', ')}
+              </p>
+            )}
+          </div>
+        )}
+
+        {!canManageDatabase ? (
+          <p className="text-slate-600">
+            Apenas utilizadores com perfil <strong className="text-slate-900">OWNER</strong> ou{' '}
+            <strong className="text-slate-900">ADMIN</strong> podem ligar ou alterar a base de dados Google Sheets da empresa.
+          </p>
+        ) : (
+          <div className="space-y-5">
+            {/* Passo 1: Conta Google / Gmail da Empresa */}
+            <div className="p-4 rounded-lg border border-slate-200 space-y-3">
+              <p className="font-semibold text-slate-900">
+                1. Conta Google / Gmail da Empresa
+              </p>
+              <form onSubmit={handleSaveGoogleEmail} className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
+                <div className="flex-1">
+                  <label htmlFor="company-google-email" className="block text-[11px] font-medium text-slate-600 mb-1">
+                    Endereço Gmail / Google Workspace da empresa
+                  </label>
+                  <input
+                    id="company-google-email"
+                    type="email"
+                    value={googleEmailInput}
+                    onChange={(e) => setGoogleEmailInput(e.target.value)}
+                    placeholder="dados@suaempresa.pt ou empresa@gmail.com"
+                    className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                  />
+                </div>
                 <button
-                  type="button"
-                  disabled={driveLoading}
-                  onClick={() => refreshDriveFiles(driveToken)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-800 rounded-lg font-medium hover:bg-slate-50"
+                  type="submit"
+                  disabled={sheetsBusy}
+                  className="px-4 py-2 bg-white border border-slate-300 text-slate-800 rounded-lg font-medium hover:bg-slate-50 whitespace-nowrap"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${driveLoading ? 'animate-spin' : ''}`} />
-                  Atualizar Lista
+                  Guardar Email
                 </button>
+                <GoogleSignInButton
+                  onClick={handleConnectGoogleAccount}
+                  disabled={sheetsBusy}
+                  label={hasOAuthCredentials ? 'Reconectar conta Google' : 'Ligar conta Google'}
+                />
+              </form>
+              <p className="text-[11px] text-slate-500">
+                Modo OAuth ativo no servidor:{' '}
+                <span className="font-mono text-slate-700">
+                  {sheetsConfig?.oauth_code_flow_configured
+                    ? 'OAuth 2.0 Authorization Code + PKCE (refresh_token persistente)'
+                    : 'Google Workspace OAuth Bridge (tokens armazenados encriptados no servidor)'}
+                </span>
+              </p>
+            </div>
+
+            {/* Passo 2: Folha de Cálculo da Empresa */}
+            <div className="p-4 rounded-lg border border-slate-200 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-slate-900">
+                    2. Folha de Cálculo Google da Empresa
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Crie uma nova folha estruturada ou associe uma Folha de Cálculo Google existente através do seletor ou por ID/URL.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={!hasOAuthCredentials || sheetsBusy}
+                    onClick={handleOpenPicker}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 text-slate-800 rounded-lg font-medium hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <FolderSearch className="w-3.5 h-3.5" />
+                    <span>Selecionar folha de cálculo</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!hasOAuthCredentials || sheetsBusy}
+                    onClick={() =>
+                      setConfirmDialog({
+                        type: 'create',
+                        title: `Criar nova Folha de Cálculo "MANDATO — ${company.name}"?`,
+                        description: `Será criada uma nova Folha de Cálculo na conta Google ${sheetsConfig?.verified_google_email} com as 20 abas operacionais MANDATO (CompanySettings, Users, Agents, Policies, Workflows, AuditLogs, etc.) e associada como base de dados exclusiva desta empresa.`,
+                        confirmLabel: 'Confirmar Criação da Folha',
+                      })
+                    }
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 text-white rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Criar nova folha de cálculo</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Associação direta por URL ou ID */}
+              <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end pt-2 border-t border-slate-100">
+                <div className="flex-1">
+                  <label htmlFor="spreadsheet-url-input" className="block text-[11px] font-medium text-slate-600 mb-1">
+                    Associar folha existente por URL ou ID do Google Sheets
+                  </label>
+                  <input
+                    id="spreadsheet-url-input"
+                    type="text"
+                    value={spreadsheetInput}
+                    onChange={(e) => setSpreadsheetInput(e.target.value)}
+                    placeholder="https://docs.google.com/spreadsheets/d/... ou ID da folha"
+                    className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                  />
+                </div>
+                <label className="inline-flex items-center gap-2 text-slate-700 pb-2">
+                  <input
+                    type="checkbox"
+                    checked={initializeMissingOnSelect}
+                    onChange={(e) => setInitializeMissingOnSelect(e.target.checked)}
+                    className="rounded border-slate-300"
+                  />
+                  <span>Criar abas em falta automaticamente</span>
+                </label>
                 <button
                   type="button"
-                  disabled={driveBusy}
-                  onClick={() =>
-                    setConfirmAction({
-                      type: 'sync',
-                      fileName: targetFileName,
-                      title: existingTargetFile
-                        ? 'Atualizar base de dados no Google Drive?'
-                        : 'Criar base de dados no Google Drive?',
-                      description: existingTargetFile
-                        ? `O ficheiro existente "${targetFileName}" na pasta "MANDATO - Base de Dados" será substituído pela cópia atual dos agentes, políticas, fluxos, aprovações e auditoria da empresa.`
-                        : `Será criado o ficheiro "${targetFileName}" na pasta "MANDATO - Base de Dados" da conta ${driveAccount?.email || 'Google'} com todos os dados atuais da empresa.`,
-                      confirmLabel: existingTargetFile ? 'Confirmar Atualização' : 'Confirmar Gravação',
-                    })
-                  }
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50"
+                  disabled={!hasOAuthCredentials || !spreadsheetInput.trim() || sheetsBusy}
+                  onClick={() => handleSelectSpreadsheet(spreadsheetInput)}
+                  className="px-4 py-2 bg-emerald-700 text-white rounded-lg font-medium hover:bg-emerald-800 disabled:opacity-50 whitespace-nowrap"
                 >
-                  <UploadCloud className="w-3.5 h-3.5" />
-                  Guardar na Google Drive
+                  Associar Folha
                 </button>
               </div>
             </div>
 
-            {driveFiles.length === 0 ? (
-              <p className="text-slate-500 py-2">
-                Ainda não existem ficheiros de base de dados MANDATO na pasta desta conta Google Drive. Clique em «Guardar na Google Drive» para criar o primeiro.
-              </p>
-            ) : (
-              <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-[11px] text-slate-500 uppercase">
-                      <th className="py-2.5 px-3 font-semibold">Ficheiro na Google Drive</th>
-                      <th className="py-2.5 px-3 font-semibold">Última Modificação</th>
-                      <th className="py-2.5 px-3 font-semibold">Tamanho</th>
-                      <th className="py-2.5 px-3 font-semibold text-right">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {driveFiles.map((f) => (
-                      <tr key={f.id} className="hover:bg-slate-50/70">
-                        <td className="py-2.5 px-3 font-mono text-slate-900">{f.name}</td>
-                        <td className="py-2.5 px-3 text-slate-600 tabular-nums">
-                          {formatDateTimePT(f.modifiedTime)}
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-slate-600 tabular-nums">
-                          {(f.sizeBytes / 1024).toFixed(1)} KB
-                        </td>
-                        <td className="py-2.5 px-3 text-right">
-                          <div className="inline-flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setConfirmAction({
-                                  type: 'restore',
-                                  fileId: f.id,
-                                  fileName: f.name,
-                                  title: `Restaurar base de dados de "${f.name}"?`,
-                                  description:
-                                    'Esta operação irá substituir os agentes, políticas, fluxos de trabalho e pedidos atuais desta empresa pelos dados guardados neste ficheiro da Google Drive.',
-                                  confirmLabel: 'Confirmar Restauro',
-                                  danger: true,
-                                })
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-white border border-slate-300 text-slate-800 rounded-md hover:bg-slate-50"
-                            >
-                              <DownloadCloud className="w-3 h-3" />
-                              Restaurar
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Eliminar ficheiro ${f.name}`}
-                              onClick={() =>
-                                setConfirmAction({
-                                  type: 'delete',
-                                  fileId: f.id,
-                                  fileName: f.name,
-                                  title: `Eliminar "${f.name}" da Google Drive?`,
-                                  description:
-                                    'O ficheiro selecionado será eliminado da Google Drive empresarial. Os dados atualmente ativos no servidor local não são apagados.',
-                                  confirmLabel: 'Confirmar Eliminação',
-                                  danger: true,
-                                })
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-red-50 border border-red-200 text-red-700 rounded-md hover:bg-red-100"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                              Eliminar
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {/* Passo 3: Testar, Inicializar Estrutura e Desligar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!hasOAuthCredentials || !hasSpreadsheet || sheetsBusy}
+                  onClick={handleTestConnection}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-300 text-slate-800 rounded-lg font-medium hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <Activity className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Testar ligação</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!hasOAuthCredentials || !hasSpreadsheet || sheetsBusy}
+                  onClick={() =>
+                    setConfirmDialog({
+                      type: 'initialize',
+                      title: 'Validar e inicializar estrutura MANDATO na folha?',
+                      description:
+                        'O sistema irá verificar as 20 abas obrigatórias e criar apenas as abas ou cabeçalhos em falta, sem apagar dados existentes.',
+                      confirmLabel: 'Confirmar Inicialização',
+                    })
+                  }
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-300 text-slate-800 rounded-lg font-medium hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <Wrench className="w-3.5 h-3.5 text-slate-700" />
+                  <span>Validar / Inicializar estrutura</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={sheetsBusy}
+                  onClick={() => loadSettings()}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-slate-600 hover:text-slate-900"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${sheetsBusy ? 'animate-spin' : ''}`} />
+                  <span>Atualizar estado</span>
+                </button>
+              </div>
+
+              {hasOAuthCredentials && (
+                <button
+                  type="button"
+                  disabled={sheetsBusy}
+                  onClick={() =>
+                    setConfirmDialog({
+                      type: 'disconnect',
+                      title: 'Desligar conta Google e revogar tokens?',
+                      description:
+                        'Os tokens encriptados guardados no servidor serão eliminados e revogados junto da Google. A empresa ficará com a base de dados desligada até nova autorização, sem perda dos dados na sua Folha de Cálculo Google.',
+                      confirmLabel: 'Confirmar Desligamento',
+                      danger: true,
+                    })
+                  }
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg font-medium hover:bg-red-100 disabled:opacity-50"
+                >
+                  <Unplug className="w-3.5 h-3.5" />
+                  <span>Desligar conta Google</span>
+                </button>
+              )}
+            </div>
+
+            {/* Resultados Passo-a-Passo do Teste de Ligação */}
+            {testSteps && (
+              <div className="p-4 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
+                <p className="font-semibold text-slate-900">Resultado do Diagnóstico (7 Verificações):</p>
+                <div className="space-y-1.5">
+                  {testSteps.map((s, idx) => (
+                    <div key={idx} className="flex items-start gap-2">
+                      {s.ok ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 mt-0.5 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-700 mt-0.5 shrink-0" />
+                      )}
+                      <div>
+                        <span className="font-semibold text-slate-900">{s.step}:</span>{' '}
+                        <span className="text-slate-600">{s.detail}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Dados da Empresa */}
+      {/* Dados Fiscais da Empresa */}
       <form onSubmit={handleSaveCompany} className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 text-xs">
         <h2 className="font-display text-base font-semibold text-slate-900">Perfil da Empresa</h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
-            <label className="block font-medium text-slate-700 mb-1">Denominação Social</label>
+            <label htmlFor="company-name-input" className="block font-medium text-slate-700 mb-1">
+              Denominação Social
+            </label>
             <input
+              id="company-name-input"
               type="text"
-              disabled={!canEdit}
+              disabled={!canEditCompany}
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg disabled:bg-slate-50"
             />
           </div>
           <div>
-            <label className="block font-medium text-slate-700 mb-1">NIF</label>
+            <label htmlFor="company-nif-input" className="block font-medium text-slate-700 mb-1">
+              NIF
+            </label>
             <input
+              id="company-nif-input"
               type="text"
-              disabled={!canEdit}
+              disabled={!canEditCompany}
               value={nif}
               onChange={(e) => setNif(e.target.value)}
               className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg disabled:bg-slate-50"
             />
           </div>
           <div>
-            <label className="block font-medium text-slate-700 mb-1">Setor de Atividade</label>
+            <label htmlFor="company-sector-input" className="block font-medium text-slate-700 mb-1">
+              Setor de Atividade
+            </label>
             <input
+              id="company-sector-input"
               type="text"
-              disabled={!canEdit}
+              disabled={!canEditCompany}
               value={sector}
               onChange={(e) => setSector(e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg disabled:bg-slate-50"
             />
           </div>
         </div>
-        {canEdit && (
+        {canEditCompany && (
           <button
             type="submit"
             disabled={saving}
@@ -539,7 +840,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUserRole, onC
                   </div>
                 </div>
 
-                {canEdit && (
+                {canEditCompany && (
                   <button
                     type="button"
                     disabled={isCurrent}
@@ -559,47 +860,113 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUserRole, onC
         </div>
       </div>
 
-      {/* Estado da Base de Dados & Supabase */}
-      <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-3 text-xs">
+      {/* Arquitetura Multi-Tenant */}
+      <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-2 text-xs">
         <div className="flex items-center gap-2">
           <Database className="w-4 h-4 text-slate-700" />
           <h2 className="font-display text-base font-semibold text-slate-900">
-            Base de Dados Local e Ligação Supabase PostgreSQL
+            Arquitetura de Persistência Multi-Tenant
           </h2>
         </div>
         <p className="text-slate-700">
           Modo ativo neste servidor: <strong className="font-mono">{dbMode}</strong>
         </p>
-        {!supabaseConfigured && (
-          <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-600 space-y-1">
-            <p className="font-semibold text-slate-800">Como ligar ao Supabase PostgreSQL + Auth (opcional):</p>
-            <p>1. Execute as migrações <span className="font-mono">supabase/migrations/001_initial_schema.sql</span> e <span className="font-mono">supabase/seed.sql</span> no seu projeto Supabase.</p>
-            <p>2. Defina <span className="font-mono">SUPABASE_URL</span>, <span className="font-mono">SUPABASE_ANON_KEY</span> e <span className="font-mono">SUPABASE_SERVICE_ROLE_KEY</span> nas variáveis de ambiente do servidor.</p>
-          </div>
-        )}
+        <p className="text-slate-500">
+          O plano de controlo central gere apenas sessões, membros, roteamento de credenciais por hash e metadados da ligação. Os dados operacionais de negócio permanecem isolados exclusivamente na Folha de Cálculo Google de cada empresa.
+        </p>
       </div>
 
-      {/* Modal de Confirmação Explícita para Operações Google Drive */}
-      {confirmAction && (
+      {/* Modal Seletor de Folha de Cálculo no Google Drive */}
+      {showPickerModal && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-labelledby="drive-confirm-title"
+          aria-labelledby="sheets-picker-title"
+          className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4"
+        >
+          <div className="bg-white border border-slate-200 rounded-xl max-w-xl w-full p-6 space-y-4 shadow-xl text-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 id="sheets-picker-title" className="font-display text-base font-semibold text-slate-900">
+                Selecionar Folha de Cálculo Google
+              </h3>
+              <button
+                type="button"
+                aria-label="Fechar seletor de folhas"
+                onClick={() => setShowPickerModal(false)}
+                className="p-1 text-slate-500 hover:text-slate-900 rounded-md"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {loadingSheetsList ? (
+              <div className="h-32 flex items-center justify-center text-slate-500">
+                A listar folhas de cálculo da conta Google...
+              </div>
+            ) : availableSheets.length === 0 ? (
+              <div className="p-4 rounded-lg bg-slate-50 border border-slate-200 text-slate-600 space-y-1">
+                <p className="font-semibold text-slate-900">Nenhuma folha encontrada na listagem direta.</p>
+                <p>
+                  Se a autorização atual usar o âmbito restrito <span className="font-mono">drive.file</span>, pode criar uma nova folha com o botão «Criar nova folha de cálculo» ou colar o URL da folha pretendida no campo abaixo.
+                </p>
+              </div>
+            ) : (
+              <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-lg">
+                {availableSheets.map((item) => (
+                  <div key={item.id} className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-900 truncate">{item.name}</p>
+                      <p className="text-[11px] font-mono text-slate-500 truncate">
+                        ID: {item.id} · Modificada: {formatDateTimePT(item.modifiedTime)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={sheetsBusy}
+                      onClick={() => handleSelectSpreadsheet(item.id)}
+                      className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-medium hover:bg-slate-800 shrink-0"
+                    >
+                      Selecionar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowPickerModal(false)}
+                className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg font-medium hover:bg-slate-200"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmação Explícita */}
+      {confirmDialog && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sheets-confirm-title"
           className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4"
         >
           <div className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
             <div className="flex items-start gap-3">
               <AlertTriangle
                 className={`w-5 h-5 mt-0.5 shrink-0 ${
-                  confirmAction.danger ? 'text-red-600' : 'text-amber-600'
+                  confirmDialog.danger ? 'text-red-600' : 'text-amber-600'
                 }`}
               />
               <div>
-                <h3 id="drive-confirm-title" className="font-display text-base font-semibold text-slate-900">
-                  {confirmAction.title}
+                <h3 id="sheets-confirm-title" className="font-display text-base font-semibold text-slate-900">
+                  {confirmDialog.title}
                 </h3>
                 <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                  {confirmAction.description}
+                  {confirmDialog.description}
                 </p>
               </div>
             </div>
@@ -607,23 +974,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUserRole, onC
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
-                disabled={driveBusy}
-                onClick={() => setConfirmAction(null)}
+                disabled={sheetsBusy}
+                onClick={() => setConfirmDialog(null)}
                 className="px-4 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
               >
                 Cancelar
               </button>
               <button
                 type="button"
-                disabled={driveBusy}
-                onClick={executeConfirmedDriveAction}
+                disabled={sheetsBusy}
+                onClick={executeConfirmedDialogAction}
                 className={`px-4 py-2 text-xs font-medium text-white rounded-lg disabled:opacity-50 ${
-                  confirmAction.danger
+                  confirmDialog.danger
                     ? 'bg-red-600 hover:bg-red-700'
                     : 'bg-slate-900 hover:bg-slate-800'
                 }`}
               >
-                {driveBusy ? 'A executar...' : confirmAction.confirmLabel}
+                {sheetsBusy ? 'A executar...' : confirmDialog.confirmLabel}
               </button>
             </div>
           </div>

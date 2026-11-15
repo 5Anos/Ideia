@@ -20,6 +20,15 @@ export type PolicyRuleType =
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
+export type SheetsConnectionStatus =
+  | 'Não configurado'
+  | 'A aguardar autorização'
+  | 'Ligado'
+  | 'Erro de autenticação'
+  | 'Sem acesso à folha'
+  | 'Estrutura inválida'
+  | 'Ligação expirada';
+
 export type BusinessCategory =
   | 'Financeiro'
   | 'Administrativo'
@@ -42,6 +51,45 @@ export interface Company {
   is_demo: boolean;
   retention_days: number;
   created_at: string;
+  updated_at?: string;
+}
+
+export interface TenantSheetsConfig {
+  company_id: string;
+  company_name: string;
+  entered_google_email: string;
+  verified_google_email: string;
+  email_mismatch_confirmed: boolean;
+  email_mismatch_warning: boolean;
+  spreadsheet_id: string;
+  spreadsheet_name: string;
+  spreadsheet_url: string;
+  connection_status: SheetsConnectionStatus;
+  last_connection_test: string | null;
+  last_successful_write: string | null;
+  last_error: string | null;
+  schema_valid: boolean;
+  missing_worksheets: string[];
+  oauth_mode: 'authorization_code_pkce' | 'workspace_popup_bridge';
+  oauth_code_flow_configured: boolean;
+  updated_at: string;
+}
+
+export interface PlatformTenantSummary {
+  company_id: string;
+  company_name: string;
+  slug: string;
+  subscription_plan: SubscriptionPlan;
+  is_demo: boolean;
+  entered_google_email: string;
+  verified_google_email: string;
+  spreadsheet_id: string;
+  spreadsheet_name: string;
+  connection_status: SheetsConnectionStatus;
+  schema_valid: boolean;
+  last_connection_test: string | null;
+  last_successful_write: string | null;
+  created_at: string;
 }
 
 export interface UserSession {
@@ -54,6 +102,7 @@ export interface UserSession {
   company_name: string;
   subscription_plan: SubscriptionPlan;
   is_demo_company: boolean;
+  is_platform_admin?: boolean;
 }
 
 export interface CompanyMember {
@@ -167,6 +216,7 @@ export interface Policy {
   is_demo: boolean;
   created_at: string;
   updated_at: string;
+  assigned_agent_ids?: string[];
 }
 
 export interface AuthorizationRequestRecord {
@@ -204,6 +254,8 @@ export interface ApprovalRequestRecord {
   risk_level: RiskLevel;
   status: ApprovalStatus;
   info_requested_note: string | null;
+  expires_at?: string | null;
+  workflow_execution_id?: string | null;
   is_demo: boolean;
   created_at: string;
   updated_at: string;
@@ -269,6 +321,8 @@ export interface WorkflowExecution {
   workflow_name?: string;
   status: 'completed' | 'awaiting_approval' | 'blocked' | 'failed';
   input_summary: string;
+  paused_node_id?: string | null;
+  approval_request_id?: string | null;
   steps_log: Array<{
     node_id: string;
     label: string;
@@ -279,6 +333,7 @@ export interface WorkflowExecution {
     timestamp: string;
   }>;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface IntegrationItem {

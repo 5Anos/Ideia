@@ -7,8 +7,9 @@ import {
   CheckCircle2,
   AlertTriangle,
 } from 'lucide-react';
-import { apiFetch } from '../utils/api';
+import { apiFetch, isDatabaseNotConnectedError } from '../utils/api';
 import { formatDateTimePT, formatEUR, AGENT_STATUS_META } from '../utils/formatters';
+import { DatabaseNotConnectedBanner } from './DatabaseNotConnectedBanner';
 import type { NavSectionId } from './Sidebar';
 
 interface DashboardData {
@@ -66,6 +67,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ isDemoCompany, onN
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dbDisconnected, setDbDisconnected] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -75,10 +77,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ isDemoCompany, onN
         if (active) {
           setData(res);
           setError(null);
+          setDbDisconnected(false);
         }
       })
       .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : 'Erro ao carregar painel.');
+        if (active) {
+          setDbDisconnected(isDatabaseNotConnectedError(err));
+          setError(err instanceof Error ? err.message : 'Erro ao carregar painel.');
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -97,6 +103,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ isDemoCompany, onN
           ))}
         </div>
         <div className="bg-white border border-slate-200 rounded-xl h-72 animate-pulse" />
+      </div>
+    );
+  }
+
+  if (dbDisconnected) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-slate-900 tracking-tight">
+            Visão Geral de Governação
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Ligue a Folha de Cálculo Google da empresa para ativar o painel operacional isolado.
+          </p>
+        </div>
+        <DatabaseNotConnectedBanner message={error || undefined} onNavigate={onNavigate} />
       </div>
     );
   }

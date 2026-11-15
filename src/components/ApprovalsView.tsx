@@ -1,18 +1,24 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, XCircle, HelpCircle, ShieldAlert } from 'lucide-react';
-import { apiFetch } from '../utils/api';
+import { CheckCircle2, XCircle, HelpCircle, GitBranch, Clock } from 'lucide-react';
+import { apiFetch, isDatabaseNotConnectedError } from '../utils/api';
 import { formatDateTimePT, formatEUR, RISK_LABELS } from '../utils/formatters';
+import { DatabaseNotConnectedBanner } from './DatabaseNotConnectedBanner';
 import type { ApprovalRequestRecord, ApprovalStatus } from '../shared/types';
 
 interface ApprovalsViewProps {
   onApprovalsUpdated: () => void;
+  onNavigateSettings?: () => void;
 }
 
-export const ApprovalsView: React.FC<ApprovalsViewProps> = ({ onApprovalsUpdated }) => {
+export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
+  onApprovalsUpdated,
+  onNavigateSettings,
+}) => {
   const [approvals, setApprovals] = useState<ApprovalRequestRecord[]>([]);
   const [statusFilter, setStatusFilter] = useState<'Todos' | ApprovalStatus>('Todos');
   const [justifications, setJustifications] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [dbDisconnected, setDbDisconnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -22,7 +28,9 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({ onApprovalsUpdated
       const res = await apiFetch<{ approvals: ApprovalRequestRecord[] }>('/api/approvals');
       setApprovals(res.approvals);
       setError(null);
+      setDbDisconnected(false);
     } catch (err) {
+      setDbDisconnected(isDatabaseNotConnectedError(err));
       setError(err instanceof Error ? err.message : 'Erro ao carregar aprovações.');
     } finally {
       setLoading(false);
@@ -61,6 +69,22 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({ onApprovalsUpdated
   const filtered =
     statusFilter === 'Todos' ? approvals : approvals.filter((a) => a.status === statusFilter);
 
+  if (dbDisconnected) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-slate-900 tracking-tight">
+            Pedidos de Aprovação
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Controlo humano obrigatório para ações financeiras ou operacionais sensíveis.
+          </p>
+        </div>
+        <DatabaseNotConnectedBanner message={error || undefined} onNavigateSettings={onNavigateSettings} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -69,12 +93,12 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({ onApprovalsUpdated
             Pedidos de Aprovação
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Controlo humano obrigatório para ações financeiras ou operacionais sensíveis. A aprovação regista a autorização e não executa pagamentos automáticos.
+            Controlo humano obrigatório para ações financeiras ou operacionais sensíveis. A aprovação regista a autorização e retoma fluxos de trabalho em pausa.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg self-start">
-          {(['Todos', 'Pendente', 'Aprovado', 'Rejeitado'] as const).map((st) => (
+          {(['Todos', 'Pendente', 'Aprovado', 'Rejeitado', 'Expirado'] as const).map((st) => (
             <button
               key={st}
               type="button"
@@ -115,6 +139,8 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({ onApprovalsUpdated
                 ? 'text-amber-700'
                 : apr.status === 'Aprovado'
                 ? 'text-emerald-700'
+                : apr.status === 'Expirado'
+                ? 'text-slate-500'
                 : 'text-red-700';
 
             return (
@@ -127,10 +153,22 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({ onApprovalsUpdated
                       <span>{apr.agent_name}</span>
                       <span aria-hidden="true">·</span>
                       <span>{formatDateTimePT(apr.created_at)}</span>
-                      {apr.is_demo && (
+                      {apr.expires_at && (
                         <>
                           <span aria-hidden="true">·</span>
-                          <span>Demonstração</span>
+                          <span className="inline-flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            Expira: {formatDateTimePT(apr.expires_at)}
+                          </span>
+                        </>
+                      )}
+                      {apr.workflow_execution_id && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="inline-flex items-center gap-1 text-slate-700 font-medium">
+                            <GitBranch className="w-3 h-3" />
+                            Fluxo em pausa
+                          </span>
                         </>
                       )}
                     </div>

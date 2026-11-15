@@ -73,7 +73,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
     setInfoMessage(null);
     setLoading(true);
     try {
-      const res = await apiFetch<{ message: string; dev_recovery_code?: string }>('/api/auth/recover', {
+      const res = await apiFetch<{ message: string }>('/api/auth/recover', {
         method: 'POST',
         body: JSON.stringify(
           recoveryStep2
@@ -83,7 +83,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
       });
       setInfoMessage(res.message);
       if (!recoveryStep2) {
-        if (res.dev_recovery_code) setRecoveryToken(res.dev_recovery_code);
         setRecoveryStep2(true);
       } else {
         setRecoveryStep2(false);

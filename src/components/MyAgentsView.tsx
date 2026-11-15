@@ -13,13 +13,15 @@ import {
   TerminalSquare,
   X,
 } from 'lucide-react';
-import { apiFetch } from '../utils/api';
+import { apiFetch, isDatabaseNotConnectedError } from '../utils/api';
 import { AGENT_STATUS_META, DECISION_META, formatDateTimePT, formatEUR } from '../utils/formatters';
+import { DatabaseNotConnectedBanner } from './DatabaseNotConnectedBanner';
 import type { Agent, AuthorizationRequestRecord, Policy } from '../shared/types';
 
 interface MyAgentsViewProps {
   onTestAgent: (agentId: string) => void;
   onGoToWizard: () => void;
+  onNavigateSettings?: () => void;
 }
 
 type DetailTab =
@@ -31,13 +33,18 @@ type DetailTab =
   | 'performance'
   | 'configuration';
 
-export const MyAgentsView: React.FC<MyAgentsViewProps> = ({ onTestAgent, onGoToWizard }) => {
+export const MyAgentsView: React.FC<MyAgentsViewProps> = ({
+  onTestAgent,
+  onGoToWizard,
+  onNavigateSettings,
+}) => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dbDisconnected, setDbDisconnected] = useState(false);
 
   // Perfil detalhado (7 separadores)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -72,7 +79,9 @@ export const MyAgentsView: React.FC<MyAgentsViewProps> = ({ onTestAgent, onGoToW
         setExtPolicies([polRes.policies[0].id]);
       }
       setError(null);
+      setDbDisconnected(false);
     } catch (err) {
+      setDbDisconnected(isDatabaseNotConnectedError(err));
       setError(err instanceof Error ? err.message : 'Erro ao carregar agentes.');
     } finally {
       setLoading(false);
@@ -192,6 +201,22 @@ export const MyAgentsView: React.FC<MyAgentsViewProps> = ({ onTestAgent, onGoToW
       a.provider.toLowerCase().includes(q)
     );
   });
+
+  if (dbDisconnected) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-slate-900 tracking-tight">
+            Os Meus Agentes
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Ligue a Folha de Cálculo Google da empresa para consultar e gerir agentes.
+          </p>
+        </div>
+        <DatabaseNotConnectedBanner message={error || undefined} onNavigateSettings={onNavigateSettings} />
+      </div>
+    );
+  }
 
   if (detailData) {
     const ag = detailData.agent;

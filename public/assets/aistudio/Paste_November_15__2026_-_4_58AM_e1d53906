@@ -1,0 +1,1023 @@
+MANDATO — MULTI-TENANT GOOGLE SHEETS ARCHITECTURE, COMPLETE REFACTOR AND SECURITY IMPROVEMENT
+
+Act as a senior software architect, Google Cloud engineer, Google Sheets API specialist, OAuth security engineer, full-stack developer, AI agent engineer and cybersecurity specialist.
+
+You are working on an EXISTING application called MANDATO.
+
+Your task is to inspect, repair, refactor and improve the existing project.
+
+IMPORTANT: Do not create a new application from scratch. Preserve all existing functionality and improve the current codebase.
+
+The most important architectural decision is:
+
+EVERY COMPANY MUST CONNECT ITS OWN GOOGLE ACCOUNT AND USE ITS OWN GOOGLE SPREADSHEET AS ITS OPERATIONAL DATABASE.
+
+There must be no shared operational spreadsheet containing the business data of all companies.
+
+Each company must have a completely independent Google Sheets database.
+
+The application must allow each company administrator to enter their Google account email, connect their Google account securely, select or provide their own spreadsheet and test the connection.
+
+The platform must never access a company's spreadsheet without valid authorization.
+
+---
+
+1. INSPECT THE EXISTING PROJECT FIRST
+
+Inspect the complete existing codebase before making changes.
+
+The current project already contains:
+
+- AI Agent Factory.
+- AI agent creation wizard.
+- Gemini integration.
+- Agent templates.
+- Agent testing environment.
+- Agent management.
+- Authorization policies.
+- Human approval workflows.
+- Audit logs.
+- External agent registration.
+- REST authorization gateway.
+- Workflow builder.
+- Google Drive integration.
+- Multi-company architecture.
+
+Preserve these capabilities.
+
+Pay particular attention to:
+
+- src/server/db.ts
+- src/server/routes.ts
+- src/server/security.ts
+- src/server/policyEngine.ts
+- src/server/aiProvider.ts
+- src/server/googleDriveSync.ts
+- src/shared/types.ts
+- src/components/SettingsView.tsx
+- src/components/AuthScreen.tsx
+- src/components/IntegrationsView.tsx
+- server.ts
+- package.json
+- README.md
+- .env.example
+
+The current database implementation includes SQLite and Supabase-related code.
+
+These implementations must be reviewed and replaced where they conflict with the new Google Sheets architecture.
+
+Before implementation, identify the affected modules and create a migration checklist.
+
+Do not stop after describing the plan. Implement the changes.
+
+---
+
+2. FUNDAMENTAL DATABASE ARCHITECTURE
+
+Implement a multi-tenant Google Sheets architecture.
+
+Each company has its own spreadsheet.
+
+Example:
+
+COMPANY A:
+
+- Google account: empresaA@gmail.com
+- Spreadsheet: MANDATO — Empresa A
+- Database: Company A's own spreadsheet.
+
+COMPANY B:
+
+- Google account: empresaB@gmail.com
+- Spreadsheet: MANDATO — Empresa B
+- Database: Company B's own spreadsheet.
+
+COMPANY C:
+
+- Google account: empresaC@gmail.com
+- Spreadsheet: MANDATO — Empresa C
+- Database: Company C's own spreadsheet.
+
+The system must guarantee that Company A cannot access Company B's data.
+
+The application must resolve the correct spreadsheet from the authenticated company context.
+
+Never accept an arbitrary spreadsheet ID from an ordinary API request.
+
+Never allow an agent to choose which company's spreadsheet to access.
+
+The authenticated server-side tenant context must determine the database connection.
+
+---
+
+3. GOOGLE SHEETS CONNECTION SETUP FOR EACH COMPANY
+
+Create a dedicated configuration section:
+
+DEFINIÇÕES → BASE DE DADOS → GOOGLE SHEETS
+
+The interface must be in European Portuguese.
+
+The configuration page must contain:
+
+A. GOOGLE ACCOUNT
+
+Field:
+
+- Email da conta Google.
+
+The user must be able to enter their Google email address.
+
+However, entering an email address alone must never be treated as proof of identity or authorization.
+
+B. CONNECT GOOGLE ACCOUNT
+
+Provide a button:
+
+"Ligar conta Google"
+
+Use Google OAuth 2.0.
+
+The connection process must:
+
+1. Redirect the user to Google's secure authorization page.
+2. Request the minimum necessary Google permissions.
+3. Allow the user to select the Google account.
+4. Obtain the authorized Google identity.
+5. Verify the returned identity and email address.
+6. Verify the OAuth state parameter.
+7. Exchange the authorization code securely on the backend.
+8. Obtain the required access and refresh tokens.
+9. Store tokens securely on the server.
+10. Return the user to the MANDATO configuration page.
+
+Use the verified Google account email as the connection identity.
+
+If the email entered by the user differs from the authenticated Google account, display a clear warning and require confirmation or correction.
+
+C. COMPANY SPREADSHEET
+
+Allow the company administrator to:
+
+- Paste a Google Sheets spreadsheet URL.
+- Or enter the spreadsheet ID.
+- Or select an accessible spreadsheet using Google's file picker, if properly implemented.
+
+The application must validate that the spreadsheet is accessible by the connected Google account.
+
+D. TEST CONNECTION
+
+Create a button:
+
+"Testar ligação"
+
+The backend must:
+
+1. Verify the OAuth connection.
+2. Verify spreadsheet access.
+3. Verify the spreadsheet ID.
+4. Check that the file is a valid Google spreadsheet.
+5. Read the spreadsheet metadata.
+6. Verify required worksheets.
+7. Check the database schema.
+8. Return a clear result.
+
+Possible statuses:
+
+- Não configurado.
+- A aguardar autorização.
+- Ligado.
+- Erro de autenticação.
+- Sem acesso à folha.
+- Estrutura inválida.
+- Ligação expirada.
+
+E. SAVE CONFIGURATION
+
+Create a button:
+
+"Guardar configuração"
+
+Only save the connection after the required validations succeed.
+
+Display:
+
+- Google account email.
+- Spreadsheet name.
+- Spreadsheet connection status.
+- Last successful connection.
+- Last successful database operation.
+
+Never display OAuth tokens or secrets.
+
+---
+
+4. GOOGLE OAUTH SECURITY
+
+Use Google OAuth 2.0 with secure server-side token handling.
+
+Request the minimum necessary permissions to read and write the company's selected spreadsheet.
+
+Do not request full Google Drive access unless absolutely necessary.
+
+If Google Drive file selection is implemented, request only the additional scope needed for that feature.
+
+Use:
+
+- Authorization code flow.
+- State validation.
+- PKCE where supported and appropriate.
+- Secure redirect URI validation.
+- Server-side token exchange.
+- Refresh token management.
+- Token revocation.
+- Session protection.
+
+Never expose access tokens or refresh tokens to React.
+
+Never store OAuth tokens in Google Sheets.
+
+Never store OAuth tokens in localStorage or sessionStorage.
+
+Use Google Cloud Secret Manager or another suitable secure server-side secret storage mechanism.
+
+Associate each company's connection with its authenticated company ID.
+
+Support:
+
+- Connect account.
+- Disconnect account.
+- Reauthorize account.
+- Change Google account.
+- Reconnect after expired authorization.
+
+When an administrator disconnects the Google account, stop all database operations for that company until a valid connection is restored.
+
+Do not silently use another company's account.
+
+---
+
+5. PLATFORM CONTROL PLANE AND TENANT REGISTRY
+
+A multi-tenant application needs a secure way to identify which spreadsheet belongs to each company.
+
+Implement a minimal platform-level control plane.
+
+This registry must contain only the metadata necessary to identify and manage tenant connections.
+
+Suggested registry fields:
+
+- company_id
+- company_name
+- owner_user_id
+- verified_google_email
+- spreadsheet_id
+- spreadsheet_name
+- connection_status
+- secret_reference
+- created_at
+- updated_at
+- last_connection_test
+
+The registry must not contain the company's operational business data.
+
+Do not store:
+
+- Agent conversations.
+- Business documents.
+- Authorization requests.
+- Approval records.
+- Company audit events.
+- Agent configurations.
+- Financial transactions.
+
+These belong exclusively in the company's own Google Sheets database.
+
+Use a secure server-side configuration store for the registry and secret references.
+
+If Google Sheets is used for the registry, it must be a separate platform-owned administrative spreadsheet, inaccessible to tenant users and agents.
+
+Do not confuse the platform registry with the company's operational database.
+
+Do not store refresh tokens or private credentials directly in the registry spreadsheet.
+
+The platform registry must be accessible only to authorized backend services.
+
+---
+
+6. AUTOMATIC CREATION OF THE COMPANY DATABASE
+
+When a company connects its Google account, offer two options:
+
+OPTION 1:
+Use an existing Google spreadsheet.
+
+OPTION 2:
+Create a new spreadsheet automatically.
+
+For option 2, create a spreadsheet named:
+
+MANDATO — [Company Name]
+
+The spreadsheet must be created in the connected company's Google account, not in a shared account belonging to another company.
+
+The application must initialize the required worksheets and column headers.
+
+Do not create duplicate worksheets if they already exist.
+
+Do not delete existing data.
+
+Before modifying an existing spreadsheet, verify its structure and ask for confirmation if changes could affect existing data.
+
+Display the spreadsheet name and link after successful initialization.
+
+---
+
+7. COMPANY DATABASE STRUCTURE
+
+Each company spreadsheet must contain the following worksheets:
+
+1. CompanySettings
+2. Users
+3. CompanyMembers
+4. Agents
+5. AgentVersions
+6. AgentCredentials
+7. AgentTools
+8. Policies
+9. PolicyAssignments
+10. AuthorizationRequests
+11. ApprovalRequests
+12. ApprovalDecisions
+13. Workflows
+14. WorkflowNodes
+15. WorkflowEdges
+16. WorkflowExecutions
+17. Integrations
+18. Notifications
+19. AuditLogs
+20. IdempotencyRecords
+
+Every worksheet must have a consistent schema.
+
+Use:
+
+- Unique UUID identifiers.
+- ISO 8601 UTC timestamps.
+- Consistent column names.
+- Company ownership.
+- Explicit data validation.
+- JSON only in designated configuration columns.
+
+Do not use spreadsheet row numbers as permanent record identifiers.
+
+Use UUIDs because rows may move or be sorted.
+
+The database adapter must resolve the spreadsheet from the authenticated tenant context.
+
+---
+
+8. GOOGLE SHEETS REPOSITORY LAYER
+
+Implement a reusable repository architecture.
+
+Suggested structure:
+
+src/server/database/
+databaseManager.ts
+googleSheetsProvider.ts
+tenantConnectionManager.ts
+tenantRegistry.ts
+repositories/
+agentsRepository.ts
+policiesRepository.ts
+approvalsRepository.ts
+workflowsRepository.ts
+auditRepository.ts
+usersRepository.ts
+
+Implement reusable methods:
+
+- findById()
+- findByField()
+- findAll()
+- insert()
+- update()
+- delete()
+- batchInsert()
+- batchUpdate()
+- appendAuditEvent()
+
+All methods must receive or derive the authenticated tenant context.
+
+Never let frontend requests select an arbitrary spreadsheet.
+
+Business services must not contain raw Google API operations.
+
+All Google Sheets access must pass through the repository layer.
+
+---
+
+9. GOOGLE SHEETS PERFORMANCE AND DATA INTEGRITY
+
+Google Sheets is not a transactional relational database.
+
+Design the architecture accordingly.
+
+Implement:
+
+- Batch reads.
+- Batch writes.
+- Efficient range access.
+- Short-lived caching where appropriate.
+- Serialized writes per company.
+- Idempotency keys.
+- Duplicate prevention.
+- Exponential backoff.
+- API quota handling.
+- Retry handling.
+- Partial operation recovery.
+- Structured logging.
+
+Do not read the entire spreadsheet for every request.
+
+Do not claim that Google Sheets provides database transactions.
+
+Use a controlled single-writer mechanism per company.
+
+Do not assume an in-memory lock protects multiple application instances.
+
+For the initial MVP, use a deployment architecture with a single backend writer per tenant or a reliable distributed lock mechanism.
+
+For multi-step operations:
+
+1. Record the operation as pending.
+2. Perform the required writes.
+3. Confirm the operation.
+4. Record the final status.
+5. Recover incomplete operations when possible.
+
+If the Google Sheets API is unavailable, return a clear error.
+
+Never claim that a record has been saved if the write failed.
+
+Never silently switch to SQLite, Supabase, Firebase or local storage.
+
+---
+
+10. REMOVE SQLITE AND SUPABASE AS OPERATIONAL DATABASES
+
+The existing application currently includes SQLite and Supabase-related code.
+
+Inspect every occurrence of:
+
+- better-sqlite3.
+- SQLite initialization.
+- db.prepare().
+- db.exec().
+- SQLite-specific SQL.
+- Supabase database operations.
+- SQLite fallback logic.
+
+Remove the old operational database implementation.
+
+Replace every operational data access with the tenant-specific Google Sheets repository.
+
+Remove unnecessary database dependencies.
+
+Preserve any existing functionality that is not related to database storage.
+
+Do not leave hidden SQLite writes active.
+
+Do not silently keep Supabase as an alternative operational database.
+
+If Supabase is not required for another explicitly documented feature, remove it.
+
+Update package.json and the lockfile.
+
+---
+
+11. AUTHENTICATION AND COMPANY MEMBERSHIP
+
+Preserve and improve the existing user authentication.
+
+The platform must distinguish:
+
+- MANDATO user identity.
+- Company membership.
+- Company Google Sheets connection.
+
+A user may belong to one or more companies, subject to permissions.
+
+The user must not automatically gain access to a company's spreadsheet merely by knowing its URL.
+
+The backend must check:
+
+1. Authenticated user.
+2. Active company membership.
+3. Company role.
+4. Requested permission.
+5. Tenant database connection.
+
+Use secure session handling.
+
+Never use predictable session secrets.
+
+Never store plaintext passwords.
+
+Use Argon2id or scrypt if email/password authentication is retained.
+
+Password recovery must use secure, expiring, single-use tokens.
+
+Never return password recovery tokens through public API responses.
+
+---
+
+12. MULTI-TENANT ISOLATION
+
+Implement strict company isolation.
+
+Example:
+
+A user belonging to Company A must only access Company A's spreadsheet.
+
+A user belonging to Company B must only access Company B's spreadsheet.
+
+The backend must derive the company ID from the authenticated context.
+
+Never trust company IDs submitted by the browser or by AI agents.
+
+Every request must resolve the correct tenant connection before accessing business data.
+
+If a company has no valid Google Sheets connection:
+
+- Do not access another spreadsheet.
+- Do not use a local database fallback.
+- Do not return fabricated data.
+- Display a clear connection error.
+- Block operations that require persistent storage.
+
+Implement explicit tests for cross-company access attempts.
+
+---
+
+13. CORRECT THE AUTHORIZATION ENGINE
+
+Inspect and repair the existing policy engine.
+
+Preserve its current functionality while correcting policy assignments.
+
+Possible results:
+
+- ALLOWED
+- REQUIRES_APPROVAL
+- BLOCKED
+
+Rules:
+
+1. Default to DENY.
+2. No applicable policy means BLOCKED.
+3. Absolute restrictions always override ordinary permissions.
+4. Agents cannot authorize their own actions.
+5. Agents cannot modify their own policies.
+6. Conflicting policies resolve safely.
+7. Every decision includes a reason.
+8. Every decision is recorded in the company's spreadsheet.
+9. Policy assignments are checked for the specific agent.
+10. Inactive policies never authorize actions.
+
+Validate company ownership of agents and policies.
+
+Use strict financial amount validation.
+
+Reject negative, malformed or non-finite amounts.
+
+Do not let AI models decide whether their own actions are authorized.
+
+---
+
+14. CORRECT APPROVAL MANAGEMENT
+
+Preserve the existing approval interface.
+
+Correct the backend workflow.
+
+Only users with the correct company role may approve or reject requests.
+
+Record:
+
+- Request ID.
+- Company ID.
+- Agent ID.
+- Action requested.
+- Policy applied.
+- Approver identity.
+- Decision.
+- Justification.
+- Timestamp.
+
+Prevent:
+
+- Duplicate decisions.
+- Self-approval by agents.
+- Approval by unauthorized users.
+- Approval of blocked actions.
+- Decisions on expired requests.
+
+An approval does not automatically mean an external operation has been executed.
+
+---
+
+15. AI AGENT FACTORY AND GEMINI
+
+Preserve the existing Agent Factory.
+
+Users must still be able to:
+
+- Create agents.
+- Generate instructions with Gemini.
+- Select supported models.
+- Configure tools.
+- Assign permissions.
+- Test agents.
+- Activate and suspend agents.
+- Manage agent templates.
+
+Gemini must remain the first fully supported provider.
+
+Prepare provider adapters for OpenAI and Anthropic, but do not show them as fully functional until implemented and tested.
+
+Keep provider API keys on the backend.
+
+Treat AI-generated instructions and responses as untrusted input.
+
+Protect against prompt injection and permission bypass attempts.
+
+All agent configurations must be stored in the respective company's spreadsheet.
+
+---
+
+16. TOOL EXECUTION AND WORKFLOWS
+
+Preserve and improve the existing tool execution and workflow modules.
+
+Every tool call must pass through:
+
+1. Agent authentication.
+2. Input validation.
+3. Tenant verification.
+4. Policy evaluation.
+5. Approval workflow when required.
+6. Tool execution when authorized.
+7. Audit recording.
+
+Support controlled tools such as:
+
+- Document search.
+- File analysis.
+- Report generation.
+- Email drafting.
+- Read-only API queries.
+- Internal company data lookup.
+
+Never allow unrestricted code execution.
+
+Never allow arbitrary URLs.
+
+Use explicit tool allowlists.
+
+Correct the workflow builder so that it follows workflow graph connections rather than simple horizontal node order.
+
+Support:
+
+- Sequential tasks.
+- Conditional branches.
+- Approval pauses.
+- Approved and rejected branches.
+- Execution logs.
+- Error handling.
+- Workflow suspension.
+
+All workflow data must be stored in the relevant company's spreadsheet.
+
+---
+
+17. EXTERNAL AGENT API
+
+Preserve:
+
+POST /api/v1/authorize
+
+The endpoint must:
+
+1. Authenticate the agent.
+2. Resolve the agent's company from server-side credentials.
+3. Resolve the company's spreadsheet.
+4. Validate the action.
+5. Evaluate applicable policies.
+6. Record the decision.
+7. Create an approval request if required.
+8. Return the result.
+
+Agent credentials must:
+
+- Be generated securely.
+- Be shown only once.
+- Be stored as cryptographic hashes.
+- Be revocable.
+- Support rotation.
+
+Never trust company IDs supplied in the request.
+
+---
+
+18. AUDIT LOGS
+
+Store each company's audit logs exclusively in that company's spreadsheet.
+
+Record:
+
+- Agent creation.
+- Agent modification.
+- Policy changes.
+- Tool invocations.
+- Authorization decisions.
+- Approval decisions.
+- Blocked actions.
+- Workflow executions.
+- Credential changes.
+- User permission changes.
+- Database connection changes.
+
+Use append-only audit operations through the application.
+
+Do not allow ordinary users to edit or delete audit records.
+
+---
+
+19. DATABASE SETTINGS INTERFACE
+
+Create a professional settings page:
+
+DEFINIÇÕES → BASE DE DADOS → GOOGLE SHEETS
+
+Display:
+
+- Google account email.
+- Connected account status.
+- Spreadsheet name.
+- Spreadsheet link.
+- Database status.
+- Last successful connection.
+- Last successful write.
+- Schema validation status.
+
+Provide buttons:
+
+- Ligar conta Google.
+- Selecionar folha de cálculo.
+- Criar nova folha.
+- Testar ligação.
+- Validar estrutura.
+- Reconectar.
+- Desligar conta.
+
+Use clear success and error messages in European Portuguese.
+
+Do not display secrets or access tokens.
+
+Only company OWNER and ADMIN roles may modify the database connection.
+
+When the Google account is disconnected, clearly warn that database-dependent functionality will be unavailable.
+
+---
+
+20. PLATFORM ADMINISTRATION
+
+Create a separate platform-level administration area.
+
+Only authorized MANDATO platform administrators can access it.
+
+It must display limited connection metadata:
+
+- Company name.
+- Verified Google email.
+- Spreadsheet connection status.
+- Spreadsheet name.
+- Last connection test.
+- Database availability.
+
+Platform administrators must not automatically have access to the contents of every company's spreadsheet.
+
+Access to company data must require explicit, controlled authorization and audit logging.
+
+Never expose platform registry secrets to company administrators.
+
+---
+
+21. TESTING
+
+Update and execute tests.
+
+GOOGLE CONNECTION:
+
+1. OAuth success.
+2. OAuth cancellation.
+3. Invalid OAuth state.
+4. Email mismatch.
+5. Token expiration.
+6. Token refresh.
+7. Spreadsheet access failure.
+8. Spreadsheet initialization.
+9. Spreadsheet schema validation.
+10. Account disconnection.
+
+TENANT ISOLATION:
+11. Company A reads its own spreadsheet.
+12. Company B reads its own spreadsheet.
+13. Company A cannot read Company B's spreadsheet.
+14. Company A cannot change its spreadsheet ID through an API request.
+15. An agent cannot access another company's data.
+
+DATABASE:
+16. Record insertion.
+17. Record update.
+18. Duplicate prevention.
+19. Quota error.
+20. Retry behaviour.
+21. Partial operation recovery.
+22. Disconnected spreadsheet.
+
+AUTHORIZATION:
+23. Allowed action.
+24. Approval required.
+25. Blocked action.
+26. No applicable policy.
+27. Absolute restriction.
+28. Policy assigned to another agent.
+29. Inactive policy.
+
+APPROVAL:
+30. Valid approval.
+31. Unauthorized approval.
+32. Duplicate approval.
+33. Approval of blocked action.
+
+WORKFLOWS:
+34. Sequential execution.
+35. Conditional branch.
+36. Approval pause and resume.
+37. Rejected branch.
+38. Workflow suspension.
+
+Do not claim tests passed unless actually executed.
+
+Use mock Google API clients for automated tests and a separate test spreadsheet for integration tests.
+
+Never use real company data in automated tests.
+
+---
+
+22. ENVIRONMENT CONFIGURATION
+
+Update .env.example.
+
+Use appropriate server-side configuration for:
+
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+GOOGLE_OAUTH_REDIRECT_URI=
+GOOGLE_CLOUD_PROJECT_ID=
+GOOGLE_SECRET_MANAGER_ENABLED=
+MANDATO_SESSION_SECRET=
+APP_URL=
+NODE_ENV=
+GEMINI_API_KEY=
+
+Do not use one global company spreadsheet ID as the operational database.
+
+Each company's spreadsheet ID must be resolved from its verified tenant connection.
+
+Do not store OAuth refresh tokens in .env.
+
+Do not store private keys or credentials in the frontend.
+
+Use a secure server-side secret manager for tenant OAuth tokens.
+
+---
+
+23. DEPLOYMENT AND DOCUMENTATION
+
+Update README.md and deployment documentation.
+
+Explain:
+
+1. How to create a Google Cloud project.
+2. How to enable Google Sheets API.
+3. How to configure OAuth consent.
+4. How to configure authorized redirect URIs.
+5. How to create OAuth credentials.
+6. How to configure Google Secret Manager.
+7. How a company connects its Google account.
+8. How a company creates or selects its spreadsheet.
+9. How spreadsheet worksheets are initialized.
+10. How to test tenant isolation.
+11. How to run tests.
+12. How to deploy the application.
+
+Document the limitations of Google Sheets:
+
+- API quotas.
+- Write concurrency.
+- Lack of full database transactions.
+- Performance limitations for large datasets.
+- Operational limitations of very high-volume applications.
+
+For the initial version, use a controlled single-writer architecture per tenant or a reliable distributed coordination mechanism.
+
+Do not claim Google Sheets is equivalent to a relational database.
+
+---
+
+24. FINAL ACCEPTANCE CRITERIA
+
+The implementation is complete only when:
+
+1. Every company can enter its own Google email.
+2. Every company can securely connect its own Google account.
+3. Every company can select or create its own spreadsheet.
+4. Every company has its own operational database.
+5. Each spreadsheet contains only that company's operational data.
+6. No shared operational spreadsheet is used.
+7. Google OAuth works through the backend.
+8. OAuth tokens are stored securely.
+9. SQLite is removed as an operational database.
+10. Supabase is removed as an operational database.
+11. No local fallback silently stores business data.
+12. Tenant isolation is enforced on every API route.
+13. The authorization engine works correctly.
+14. Approval workflows work correctly.
+15. Agent configurations are saved in the correct spreadsheet.
+16. Workflow data is saved in the correct spreadsheet.
+17. Audit logs are saved in the correct spreadsheet.
+18. Existing application features are preserved.
+19. Database errors are reported honestly.
+20. Tests are actually executed and their results reported.
+
+---
+
+25. EXECUTION INSTRUCTIONS
+
+Work directly on the existing project.
+
+Do not create a new application.
+
+Do not replace the current application with a simplified prototype.
+
+Do not remove existing functionality.
+
+Implement the changes in stages:
+
+PHASE 1: Inspect existing code and identify required changes.
+
+PHASE 2: Implement the tenant registry and Google OAuth architecture.
+
+PHASE 3: Implement the tenant-specific Google Sheets database adapter.
+
+PHASE 4: Migrate all existing operational database operations.
+
+PHASE 5: Correct authentication, authorization and company isolation.
+
+PHASE 6: Correct the policy engine and approval workflow.
+
+PHASE 7: Correct agent execution and workflow orchestration.
+
+PHASE 8: Implement the company database settings interface.
+
+PHASE 9: Run tests and verify all existing modules.
+
+PHASE 10: Update documentation.
+
+Do not stop after explaining the plan.
+
+Build the changes.
+
+If an external Google Cloud configuration is missing, implement the complete configuration interface and backend structure, then clearly identify the credentials and setup steps required.
+
+Do not fabricate successful OAuth connections or database writes.
+
+At the end, provide a precise implementation report:
+
+- Files modified.
+- Files created.
+- Dependencies changed.
+- Database architecture implemented.
+- OAuth functionality implemented.
+- Features preserved.
+- Features corrected.
+- Tests actually executed.
+- Tests passed and failed.
+- Remaining configuration requirements.
+- Remaining security limitations.
+
+FINAL REQUIREMENT: EACH COMPANY MUST CONNECT ITS OWN GOOGLE ACCOUNT AND USE ITS OWN GOOGLE SPREADSHEET. COMPANY DATA MUST NEVER BE STORED IN A SHARED OPERATIONAL SPREADSHEET. ALL TENANT DATABASE ACCESS MUST BE CONTROLLED BY THE AUTHENTICATED BACKEND.

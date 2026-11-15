@@ -15,6 +15,7 @@ import { ApprovalsView } from './components/ApprovalsView';
 import { AuditLogsView } from './components/AuditLogsView';
 import { UsersView } from './components/UsersView';
 import { SettingsView } from './components/SettingsView';
+import { PlatformAdminView } from './components/PlatformAdminView';
 import type { AgentTemplate, UserSession } from './shared/types';
 
 const SECTION_BREADCRUMBS: Record<NavSectionId, { group: string; title: string }> = {
@@ -30,6 +31,7 @@ const SECTION_BREADCRUMBS: Record<NavSectionId, { group: string; title: string }
   audit: { group: 'Governação e Segurança', title: 'Histórico e Auditoria' },
   users: { group: 'Administração', title: 'Utilizadores' },
   settings: { group: 'Administração', title: 'Definições' },
+  'platform-admin': { group: 'Administração', title: 'Administração da Plataforma' },
 };
 
 export default function App() {
@@ -40,15 +42,23 @@ export default function App() {
   const [selectedTemplate, setSelectedTemplate] = useState<AgentTemplate | null>(null);
   const [preselectedTestAgentId, setPreselectedTestAgentId] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [oauthNotice, setOauthNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+
+  async function refreshDashboardCount() {
+    try {
+      const dashRes = await apiFetch<{ kpis: { pending_approvals: number } }>('/api/dashboard');
+      setPendingApprovalsCount(dashRes.kpis.pending_approvals);
+    } catch {
+      // Quando a base de dados Google Sheets ainda não está ligada, /api/dashboard devolve 503 DATABASE_NOT_CONNECTED
+      setPendingApprovalsCount(0);
+    }
+  }
 
   async function refreshUserAndCounts() {
     try {
-      const [meRes, dashRes] = await Promise.all([
-        apiFetch<{ user: UserSession }>('/api/auth/me'),
-        apiFetch<{ kpis: { pending_approvals: number } }>('/api/dashboard'),
-      ]);
+      const meRes = await apiFetch<{ user: UserSession }>('/api/auth/me');
       setUser(meRes.user);
-      setPendingApprovalsCount(dashRes.kpis.pending_approvals);
+      await refreshDashboardCount();
     } catch {
       setStoredToken(null);
       setUser(null);
@@ -58,8 +68,28 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const autostart = params.get('autostart') === '1';
-    const existingToken = getStoredToken();
+    const oauthState = params.get('sheets_oauth');
+    if (oauthState === 'success') {
+      const email = params.get('verified_email') || '';
+      const mismatch = params.get('mismatch') === '1';
+      setOauthNotice({
+        kind: 'success',
+        text: mismatch
+          ? `Conta Google autorizada (${email}), mas difere do email indicado. Confirme ou selecione a folha de cálculo abaixo.`
+          : `Conta Google autorizada (${email}). Selecione ou crie agora a Folha de Cálculo Google da empresa.`,
+      });
+      setActiveNav('settings');
+      window.history.replaceState({}, '', '/');
+    } else if (oauthState === 'error') {
+      setOauthNotice({
+        kind: 'error',
+        text: params.get('reason') || 'Falha na autorização Google OAuth.',
+      });
+      setActiveNav('settings');
+      window.history.replaceState({}, '', '/');
+    }
 
+    const existingToken = getStoredToken();
     if (existingToken) {
       refreshUserAndCounts().finally(() => setCheckingSession(false));
     } else if (autostart) {
@@ -70,8 +100,10 @@ export default function App() {
         .then(async (res) => {
           setStoredToken(res.token);
           setUser(res.user);
-          const dashRes = await apiFetch<{ kpis: { pending_approvals: number } }>('/api/dashboard');
-          setPendingApprovalsCount(dashRes.kpis.pending_approvals);
+          await refreshDashboardCount();
+        })
+        .catch(() => {
+          setStoredToken(null);
         })
         .finally(() => setCheckingSession(false));
     } else {
@@ -98,18 +130,14 @@ export default function App() {
       <AuthScreen
         onAuthenticated={async (authenticatedUser) => {
           setUser(authenticatedUser);
-          try {
-            const dashRes = await apiFetch<{ kpis: { pending_approvals: number } }>('/api/dashboard');
-            setPendingApprovalsCount(dashRes.kpis.pending_approvals);
-          } catch {
-            setPendingApprovalsCount(0);
-          }
+          await refreshDashboardCount();
         }}
       />
     );
   }
 
   const crumb = SECTION_BREADCRUMBS[activeNav];
+  const goToSettings = () => setActiveNav('settings');
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
@@ -169,6 +197,7 @@ export default function App() {
                 setSelectedTemplate(null);
                 setActiveNav('my-agents');
               }}
+              onNavigateSettings={goToSettings}
             />
           )}
 
@@ -182,6 +211,7 @@ export default function App() {
                 setSelectedTemplate(null);
                 setActiveNav('create-agent');
               }}
+              onNavigateSettings={goToSettings}
             />
           )}
 
@@ -195,37 +225,40 @@ export default function App() {
           )}
 
           {activeNav === 'test-agents' && (
-            <TestAgentView preselectedAgentId={preselectedTestAgentId} />
-          )}
-
-          {activeNav === 'workflows' && <WorkflowsView />}
-
-          {activeNav === 'integrations' && <IntegrationsView />}
-
-          {activeNav === 'policies' && <PoliciesView />}
-
-          {activeNav === 'approvals' && (
-            <ApprovalsView
-              onApprovalsUpdated={() => {
-                apiFetch<{ kpis: { pending_approvals: number } }>('/api/dashboard')
-                  .then((d) => setPendingApprovalsCount(d.kpis.pending_approvals))
-                  .catch(() => undefined);
-              }}
+            <TestAgentView
+              preselectedAgentId={preselectedTestAgentId}
+              onNavigateSettings={goToSettings}
             />
           )}
 
-          {activeNav === 'audit' && <AuditLogsView />}
+          {activeNav === 'workflows' && <WorkflowsView onNavigateSettings={goToSettings} />}
+
+          {activeNav === 'integrations' && <IntegrationsView onNavigateSettings={goToSettings} />}
+
+          {activeNav === 'policies' && <PoliciesView onNavigateSettings={goToSettings} />}
+
+          {activeNav === 'approvals' && (
+            <ApprovalsView
+              onApprovalsUpdated={refreshDashboardCount}
+              onNavigateSettings={goToSettings}
+            />
+          )}
+
+          {activeNav === 'audit' && <AuditLogsView onNavigateSettings={goToSettings} />}
 
           {activeNav === 'users' && <UsersView currentUserRole={user.role} />}
 
           {activeNav === 'settings' && (
             <SettingsView
               currentUserRole={user.role}
+              initialOAuthNotice={oauthNotice}
               onCompanyUpdated={() => {
                 refreshUserAndCounts();
               }}
             />
           )}
+
+          {activeNav === 'platform-admin' && user.is_platform_admin && <PlatformAdminView />}
         </main>
       </div>
     </div>

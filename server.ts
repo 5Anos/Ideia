@@ -1,13 +1,13 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
-import { initDatabase } from './src/server/db.ts';
+import { initDatabasePlatform } from './src/server/database/databaseManager.ts';
 import { createApiRouter } from './src/server/routes.ts';
 
 const PORT = Number(process.env.PORT || 3000);
 
 async function startServer() {
-  initDatabase();
+  initDatabasePlatform();
 
   const app = express();
   app.set('trust proxy', true);

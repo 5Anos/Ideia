@@ -8,9 +8,12 @@ import type {
 import { detectPromptInjection } from './security.ts';
 
 export interface AuthorizationEvaluationInput {
-  agent: Pick<Agent, 'id' | 'company_id' | 'name' | 'status' | 'security_status' | 'permissions_summary'>;
+  agent: Pick<Agent, 'id' | 'company_id' | 'name' | 'status' | 'security_status' | 'permissions_summary'> & {
+    policies?: Policy[];
+  };
   agentTools: AgentTool[];
   policies: Policy[];
+  assignedPolicyIds?: string[];
   request: {
     action_type: string;
     tool_name?: string | null;
@@ -60,7 +63,18 @@ const READ_ONLY_SAFE_ACTIONS = new Set([
 export function evaluateAuthorization(input: AuthorizationEvaluationInput): AuthorizationEvaluationResult {
   const { agent, agentTools, policies, request } = input;
   const actionType = (request.action_type || '').trim().toLowerCase();
-  const amount = typeof request.amount === 'number' && !Number.isNaN(request.amount) ? request.amount : null;
+  const hasRawAmount = request.amount !== undefined && request.amount !== null;
+  if (hasRawAmount && (typeof request.amount !== 'number' || !Number.isFinite(request.amount))) {
+    return {
+      decision: 'BLOCKED',
+      reason: 'Valor financeiro inválido (não numérico ou infinito). Pedido rejeitado por segurança.',
+      matchedPolicy: null,
+      riskLevel: 'high',
+      isAbsoluteBlock: true,
+      securityIncident: true,
+    };
+  }
+  const amount = hasRawAmount ? (request.amount as number) : null;
   const description = request.description || '';
 
   // 1. Verificar tentativa de acesso cross-tenant
@@ -203,10 +217,26 @@ export function evaluateAuthorization(input: AuthorizationEvaluationInput): Auth
     };
   }
 
-  // 9. Avaliar todas as políticas ativas aplicáveis (resolução mais restritiva prevalece!)
-  const applicablePolicies = policies.filter(
-    (p) => p.status === 'active' && (p.action_type === actionType || p.action_type === '*')
-  );
+  // 9. Avaliar políticas ativas aplicáveis AO AGENTE (resolução mais restritiva prevalece!)
+  // Caso exista lista explícita de políticas atribuídas (assignedPolicyIds ou agent.policies), apenas políticas atribuídas
+  // ao agente ou restrições absolutas da empresa são aplicáveis.
+  const explicitAssignedIds = input.assignedPolicyIds
+    ? new Set(input.assignedPolicyIds)
+    : Array.isArray(agent.policies)
+    ? new Set(agent.policies.map((p) => p.id))
+    : null;
+
+  const applicablePolicies = policies.filter((p) => {
+    if (p.company_id && p.company_id !== agent.company_id) return false;
+    if (p.status !== 'active') return false;
+    if (p.action_type !== actionType && p.action_type !== '*') return false;
+    // Restrições absolutas da empresa (block_always / is_absolute_restriction) aplicam-se transversalmente
+    if (p.is_absolute_restriction || p.rule_type === 'block_always') return true;
+    if (explicitAssignedIds !== null) {
+      return explicitAssignedIds.has(p.id);
+    }
+    return true;
+  });
 
   if (applicablePolicies.length === 0) {
     // Ações de leitura segura podem ser permitidas se o agente tiver permissão de leitura e não estiver em needs_policy

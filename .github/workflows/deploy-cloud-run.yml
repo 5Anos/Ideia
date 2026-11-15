@@ -21,11 +21,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - name: Validar testes e build antes do deploy
         run: |
-          npm ci
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
           npm run lint
           npm test
           npm run build
@@ -46,10 +49,10 @@ jobs:
           flags: >-
             --allow-unauthenticated
             --port=3000
-            --set-env-vars=NODE_ENV=production,GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},MANDATO_SESSION_SECRET=${{ secrets.MANDATO_SESSION_SECRET }}
+            --set-env-vars=NODE_ENV=production,GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},MANDATO_SESSION_SECRET=${{ secrets.MANDATO_SESSION_SECRET }},MANDATO_MASTER_ENCRYPTION_KEY=${{ secrets.MANDATO_MASTER_ENCRYPTION_KEY }},GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }},GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }},GOOGLE_OAUTH_REDIRECT_URI=${{ secrets.GOOGLE_OAUTH_REDIRECT_URI }}
 
       - name: Aviso se os segredos GCP ainda não estiverem configurados
         if: ${{ secrets.GCP_SA_KEY == '' || secrets.GCP_PROJECT_ID == '' }}
         run: |
-          echo "Configure os Repository Secrets GCP_PROJECT_ID, GCP_SA_KEY, GEMINI_API_KEY e MANDATO_SESSION_SECRET no GitHub (Settings -> Secrets and variables -> Actions) para ativar o deploy automático para o Cloud Run."
+          echo "Configure os Repository Secrets GCP_PROJECT_ID, GCP_SA_KEY, GEMINI_API_KEY, MANDATO_SESSION_SECRET, MANDATO_MASTER_ENCRYPTION_KEY, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET e GOOGLE_OAUTH_REDIRECT_URI no GitHub (Settings -> Secrets and variables -> Actions) para ativar o deploy automático para o Cloud Run."
           exit 1

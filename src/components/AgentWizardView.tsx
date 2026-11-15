@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Sparkles, Check, ChevronRight, ChevronLeft, ShieldAlert, Key, Send } from 'lucide-react';
-import { apiFetch } from '../utils/api';
+import { apiFetch, isDatabaseNotConnectedError } from '../utils/api';
+import { DatabaseNotConnectedBanner } from './DatabaseNotConnectedBanner';
 import type {
   Agent,
   AgentInstructions,
@@ -15,6 +16,7 @@ import { DECISION_META, formatEUR } from '../utils/formatters';
 interface AgentWizardViewProps {
   initialTemplate: AgentTemplate | null;
   onAgentCreated: () => void;
+  onNavigateSettings?: () => void;
 }
 
 const CATEGORIES: BusinessCategory[] = [
@@ -43,9 +45,11 @@ const STEPS = [
 export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
   initialTemplate,
   onAgentCreated,
+  onNavigateSettings,
 }) => {
   const [step, setStep] = useState(0);
   const [loadingMeta, setLoadingMeta] = useState(true);
+  const [dbDisconnected, setDbDisconnected] = useState(false);
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [toolCatalog, setToolCatalog] = useState<CatalogToolDefinition[]>([]);
   const [providers, setProviders] = useState<
@@ -158,6 +162,11 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
           }
         }
         setSelectedTools(initialToolMap);
+        setDbDisconnected(false);
+      })
+      .catch((err) => {
+        setDbDisconnected(isDatabaseNotConnectedError(err));
+        setError(err instanceof Error ? err.message : 'Erro ao carregar políticas.');
       })
       .finally(() => setLoadingMeta(false));
   }, []);
@@ -329,6 +338,22 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
   if (loadingMeta) {
     return <div className="bg-white border border-slate-200 rounded-xl p-8 h-80 animate-pulse" />;
+  }
+
+  if (dbDisconnected) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-slate-900 tracking-tight">
+            Criar Agente de IA
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Ligue a Folha de Cálculo Google da empresa para criar e guardar agentes.
+          </p>
+        </div>
+        <DatabaseNotConnectedBanner message={error || undefined} onNavigateSettings={onNavigateSettings} />
+      </div>
+    );
   }
 
   return (

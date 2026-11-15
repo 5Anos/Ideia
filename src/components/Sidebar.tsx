@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   LogOut,
   X,
+  ServerCog,
 } from 'lucide-react';
 import type { UserSession } from '../shared/types';
 import { ROLE_LABELS } from '../utils/formatters';
@@ -33,7 +34,8 @@ export type NavSectionId =
   | 'approvals'
   | 'audit'
   | 'users'
-  | 'settings';
+  | 'settings'
+  | 'platform-admin';
 
 interface SidebarProps {
   activeNav: NavSectionId;
@@ -66,6 +68,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
 }) => {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  const adminItems: NavGroup['items'] = [
+    { id: 'users', label: '11. Utilizadores', icon: Users },
+    { id: 'settings', label: '12. Definições', icon: Settings },
+  ];
+  if (user.is_platform_admin) {
+    adminItems.push({ id: 'platform-admin', label: '13. Plataforma', icon: ServerCog });
+  }
 
   const groups: NavGroup[] = [
     {
@@ -108,10 +118,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       id: 'administracao',
       label: 'Administração',
-      items: [
-        { id: 'users', label: '11. Utilizadores', icon: Users },
-        { id: 'settings', label: '12. Definições', icon: Settings },
-      ],
+      items: adminItems,
     },
   ];
 

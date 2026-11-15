@@ -350,3 +350,121 @@ test('Default to deny: ação desconhecida sem política ativa é BLOCKED', () =
   });
   assert.equal(res.decision, 'BLOCKED');
 });
+
+test('23. Políticas scoped: apenas políticas atribuídas ao agente (assignedPolicyIds) são aplicadas, exceto restrições absolutas', () => {
+  const scopedPolicies: Policy[] = [
+    ...basePolicies,
+    {
+      id: 'pol-other-agent',
+      company_id: COMPANY_ID,
+      name: 'Política de Exportação',
+      description: 'Permite exportar relatórios',
+      action_type: 'export_data',
+      rule_type: 'allow_if_verified',
+      max_auto_amount: null,
+      max_approval_amount: null,
+      currency: 'EUR',
+      conditions: {},
+      is_absolute_restriction: false,
+      status: 'active',
+      is_demo: false,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    },
+  ];
+
+  // Sem pol-other-agent atribuída -> Default-to-Deny (BLOCKED)
+  const blockedRes = evaluateAuthorization({
+    agent: baseAgent,
+    agentTools: baseTools,
+    policies: scopedPolicies,
+    assignedPolicyIds: ['pol-purchase'],
+    request: {
+      action_type: 'export_data',
+      description: 'Exportar listagem de clientes',
+    },
+  });
+  assert.equal(blockedRes.decision, 'BLOCKED');
+
+  // Mesmo com assignedPolicyIds limitado a pol-purchase, restrição absoluta pol-bank continua a bloquear
+  const absRes = evaluateAuthorization({
+    agent: baseAgent,
+    agentTools: baseTools,
+    policies: scopedPolicies,
+    assignedPolicyIds: ['pol-purchase'],
+    request: {
+      action_type: 'bank_details_update',
+      description: 'Alterar IBAN',
+    },
+  });
+  assert.equal(absRes.decision, 'BLOCKED');
+  assert.equal(absRes.isAbsoluteBlock, true);
+});
+
+test('24-25. Valores financeiros inválidos (NaN, Infinity, negativo) são bloqueados como incidente de segurança', () => {
+  for (const invalidAmt of [Number.NaN, Number.POSITIVE_INFINITY, -50]) {
+    const res = evaluateAuthorization({
+      agent: baseAgent,
+      agentTools: baseTools,
+      policies: basePolicies,
+      request: {
+        action_type: 'purchase_order',
+        tool_name: 'submeter_encomenda',
+        description: 'Teste valor anómalo',
+        amount: invalidAmt,
+      },
+    });
+    assert.equal(res.decision, 'BLOCKED');
+    assert.equal(res.securityIncident, true);
+  }
+});
+
+test('26-27. Políticas inativas ou de outra empresa são ignoradas pela avaliação', () => {
+  const crossAndInactive: Policy[] = [
+    {
+      ...basePolicies[0],
+      id: 'pol-inactive',
+      status: 'inactive',
+    },
+    {
+      ...basePolicies[0],
+      id: 'pol-foreign-company',
+      company_id: 'other-company-id',
+      status: 'active',
+    },
+  ];
+  const res = evaluateAuthorization({
+    agent: baseAgent,
+    agentTools: baseTools,
+    policies: crossAndInactive,
+    request: {
+      action_type: 'purchase_order',
+      tool_name: 'submeter_encomenda',
+      description: 'Compra sem política ativa válida da própria empresa',
+      amount: 100,
+    },
+  });
+  assert.equal(res.decision, 'BLOCKED');
+});
+
+test('28-29. Agente suspenso ou com credenciais suspensas é imediatamente BLOCKED mesmo em leitura segura', () => {
+  const suspendedAgent = { ...baseAgent, status: 'suspended' as const };
+  const res1 = evaluateAuthorization({
+    agent: suspendedAgent,
+    agentTools: baseTools,
+    policies: basePolicies,
+    request: { action_type: 'read_info', description: 'Ler catálogo' },
+  });
+  assert.equal(res1.decision, 'BLOCKED');
+
+  const compromisedAgent = { ...baseAgent, security_status: 'credentials_suspended' as const };
+  const res2 = evaluateAuthorization({
+    agent: compromisedAgent,
+    agentTools: baseTools,
+    policies: basePolicies,
+    request: { action_type: 'read_info', description: 'Ler catálogo' },
+  });
+  assert.equal(res2.decision, 'BLOCKED');
+  assert.equal(res2.securityIncident, true);
+});
+

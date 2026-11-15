@@ -21,9 +21,23 @@ export function setStoredToken(token: string | null): void {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly code?: string,
+    public readonly connectionStatus?: string
+  ) {
     super(message);
   }
+}
+
+export function isDatabaseNotConnectedError(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    (err.code === 'DATABASE_NOT_CONNECTED' ||
+      err.code === 'GOOGLE_AUTH_EXPIRED' ||
+      err.code === 'GOOGLE_SHEET_INACCESSIBLE')
+  );
 }
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -41,11 +55,20 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 
   if (!res.ok) {
     let errMsg = `Erro HTTP ${res.status}`;
+    let errCode: string | undefined;
+    let connStatus: string | undefined;
     if (contentType.includes('application/json')) {
-      const data = (await res.json()) as { error?: string; reason?: string };
+      const data = (await res.json()) as {
+        error?: string;
+        reason?: string;
+        code?: string;
+        connection_status?: string;
+      };
       errMsg = data.error || data.reason || errMsg;
+      errCode = data.code;
+      connStatus = data.connection_status;
     }
-    throw new ApiError(res.status, errMsg);
+    throw new ApiError(res.status, errMsg, errCode, connStatus);
   }
 
   if (contentType.includes('application/json')) {
